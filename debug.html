@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>DEBUG - ER Diagram</title>
+    <script src="https://unpkg.com/konva@9/konva.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; }
+        #header {
+            background: #1e293b;
+            color: white;
+            padding: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .active { background: #2563eb; color: white; }
+        #canvas-container {
+            width: 100vw;
+            height: calc(100vh - 60px);
+            background: white;
+        }
+        #log {
+            position: fixed;
+            top: 70px;
+            right: 10px;
+            background: rgba(0,0,0,0.8);
+            color: lime;
+            padding: 10px;
+            max-width: 400px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <button id="tool-select" class="active">Sélection</button>
+        <button id="tool-entity">Entité</button>
+        <button id="tool-association">Association</button>
+        <button id="btn-grid" class="active">Grille</button>
+        <button id="btn-clear">Effacer</button>
+    </div>
+    <div id="canvas-container"></div>
+    <div id="log"></div>
+
+    <script type="module">
+        const log = (msg, isError = false) => {
+            const logEl = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            logEl.innerHTML += `<div style="color: ${isError ? 'red' : 'lime'}">${time}: ${msg}</div>`;
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(msg);
+        };
+
+        try {
+            log('✓ Konva chargé');
+
+            // Import modules
+            const { CONFIG } = await import('./js/config.js');
+            log('✓ Config importé');
+
+            const { generateId } = await import('./js/utils.js');
+            log('✓ Utils importé');
+
+            const { Entity, Association, Attribute } = await import('./js/models.js');
+            log('✓ Models importé');
+
+            const { CreateEntityCommand, CreateAssociationCommand } = await import('./js/commands.js');
+            log('✓ Commands importé');
+
+            const { DiagramState } = await import('./js/state.js');
+            log('✓ State importé');
+
+            // Create state
+            const state = new DiagramState();
+            log('✓ DiagramState créé');
+
+            // Create stage
+            const container = document.getElementById('canvas-container');
+            const stage = new Konva.Stage({
+                container: 'canvas-container',
+                width: container.offsetWidth,
+                height: container.offsetHeight,
+                draggable: false
+            });
+            log('✓ Stage Konva créé');
+
+            // Create layers
+            const gridLayer = new Konva.Layer();
+            const nodeLayer = new Konva.Layer();
+            stage.add(gridLayer);
+            stage.add(nodeLayer);
+            log('✓ Layers créés');
+
+            // Draw grid
+            let showGrid = true;
+            const drawGrid = () => {
+                gridLayer.destroyChildren();
+                if (showGrid) {
+                    const width = container.offsetWidth;
+                    const height = container.offsetHeight;
+                    for (let x = 0; x <= width; x += 20) {
+                        gridLayer.add(new Konva.Line({
+                            points: [x, 0, x, height],
+                            stroke: '#e2e8f0',
+                            strokeWidth: 1
+                        }));
+                    }
+                    for (let y = 0; y <= height; y += 20) {
+                        gridLayer.add(new Konva.Line({
+                            points: [0, y, width, y],
+                            stroke: '#e2e8f0',
+                            strokeWidth: 1
+                        }));
+                    }
+                }
+                gridLayer.batchDraw();
+            };
+            drawGrid();
+            log('✓ Grille dessinée');
+
+            // Current tool
+            let currentTool = 'select';
+
+            // Tool buttons
+            document.getElementById('tool-select').onclick = () => {
+                currentTool = 'select';
+                document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+                document.getElementById('tool-select').classList.add('active');
+                stage.container().style.cursor = 'default';
+                log('Mode: Sélection');
+            };
+
+            document.getElementById('tool-entity').onclick = () => {
+                currentTool = 'entity';
+                document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+                document.getElementById('tool-entity').classList.add('active');
+                stage.container().style.cursor = 'crosshair';
+                log('Mode: Entité - Cliquez sur le canvas');
+            };
+
+            document.getElementById('tool-association').onclick = () => {
+                currentTool = 'association';
+                document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+                document.getElementById('tool-association').classList.add('active');
+                stage.container().style.cursor = 'crosshair';
+                log('Mode: Association - Cliquez sur le canvas');
+            };
+
+            document.getElementById('btn-grid').onclick = () => {
+                showGrid = !showGrid;
+                drawGrid();
+                document.getElementById('btn-grid').classList.toggle('active');
+                log(showGrid ? 'Grille affichée' : 'Grille masquée');
+            };
+
+            document.getElementById('btn-clear').onclick = () => {
+                nodeLayer.destroyChildren();
+                state.entities = [];
+                state.associations = [];
+                nodeLayer.batchDraw();
+                log('Tout effacé');
+            };
+
+            // Create entity function
+            const createEntity = (x, y) => {
+                const entity = new Entity(generateId('entity'), 'Entité ' + (state.entities.length + 1), x, y);
+                state.entities.push(entity);
+
+                const group = new Konva.Group({ x, y, draggable: true });
+
+                const rect = new Konva.Rect({
+                    width: 220,
+                    height: 120,
+                    fill: 'white',
+                    stroke: '#2563eb',
+                    strokeWidth: 2,
+                    cornerRadius: 8
+                });
+
+                const header = new Konva.Rect({
+                    width: 220,
+                    height: 40,
+                    fill: '#2563eb',
+                    cornerRadius: [8, 8, 0, 0]
+                });
+
+                const text = new Konva.Text({
+                    text: entity.name,
+                    x: 0,
+                    y: 12,
+                    width: 220,
+                    fontSize: 16,
+                    fontStyle: 'bold',
+                    fill: 'white',
+                    align: 'center'
+                });
+
+                group.add(rect, header, text);
+
+                group.on('dragmove', () => {
+                    entity.x = group.x();
+                    entity.y = group.y();
+                });
+
+                nodeLayer.add(group);
+                nodeLayer.batchDraw();
+
+                log(`✓ Entité créée: ${entity.name} à (${Math.round(x)}, ${Math.round(y)})`);
+            };
+
+            // Create association function
+            const createAssociation = (x, y) => {
+                const assoc = new Association(generateId('assoc'), 'Assoc ' + (state.associations.length + 1), x, y);
+                state.associations.push(assoc);
+
+                const group = new Konva.Group({ x, y, draggable: true });
+
+                const rect = new Konva.Rect({
+                    x: -80,
+                    y: -50,
+                    width: 160,
+                    height: 100,
+                    fill: '#d1fae5',
+                    stroke: '#10b981',
+                    strokeWidth: 2,
+                    cornerRadius: 15
+                });
+
+                const text = new Konva.Text({
+                    text: assoc.name,
+                    x: -80,
+                    y: -10,
+                    width: 160,
+                    fontSize: 14,
+                    fontStyle: 'bold',
+                    fill: '#065f46',
+                    align: 'center'
+                });
+
+                group.add(rect, text);
+
+                group.on('dragmove', () => {
+                    assoc.x = group.x();
+                    assoc.y = group.y();
+                });
+
+                nodeLayer.add(group);
+                nodeLayer.batchDraw();
+
+                log(`✓ Association créée: ${assoc.name} à (${Math.round(x)}, ${Math.round(y)})`);
+            };
+
+            // Stage click handler
+            stage.on('click', (e) => {
+                const target = e.target;
+
+                // Check if clicking on empty canvas
+                if (target === stage || target.getType() === 'Stage' || target.parent === gridLayer) {
+                    const pos = stage.getPointerPosition();
+
+                    if (currentTool === 'entity') {
+                        createEntity(pos.x, pos.y);
+                        currentTool = 'select';
+                        document.getElementById('tool-select').click();
+                    } else if (currentTool === 'association') {
+                        createAssociation(pos.x, pos.y);
+                        currentTool = 'select';
+                        document.getElementById('tool-select').click();
+                    }
+                }
+            });
+
+            log('✅ TOUT EST PRÊT ! Testez les boutons ci-dessus.');
+
+        } catch (error) {
+            log('✗ ERREUR: ' + error.message, true);
+            console.error(error);
+        }
+    </script>
+</body>
+</html>

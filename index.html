@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Éditeur de Diagrammes E-A (Merise)</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Konva.js via CDN pour la gestion du canvas et interactions -->
+    <script src="https://unpkg.com/konva@9/konva.min.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <h1>Éditeur E-A (Merise)</h1>
+        </div>
+        <div class="header-center">
+            <button id="btn-undo" class="btn btn-secondary" title="Annuler (Ctrl+Z)">
+                <span class="icon">↶</span> Annuler
+            </button>
+            <button id="btn-redo" class="btn btn-secondary" title="Rétablir (Ctrl+Y)">
+                <span class="icon">↷</span> Rétablir
+            </button>
+            <button id="btn-delete" class="btn btn-danger" title="Supprimer (Delete)">
+                <span class="icon">🗑</span> Supprimer
+            </button>
+            <button id="btn-grid" class="btn btn-secondary active" title="Afficher/masquer la grille">
+                <span class="icon">⊞</span> Grille
+            </button>
+            <button id="btn-snap" class="btn btn-secondary" title="Activer/désactiver le snap">
+                <span class="icon">🧲</span> Snap
+            </button>
+            <button id="btn-export" class="btn btn-primary" title="Exporter en JSON">
+                <span class="icon">💾</span> Exporter
+            </button>
+            <button id="btn-import" class="btn btn-primary" title="Importer depuis JSON">
+                <span class="icon">📁</span> Importer
+            </button>
+            <button id="btn-clear" class="btn btn-danger" title="Effacer tout">
+                <span class="icon">🗑</span> Effacer
+            </button>
+            <button id="btn-help" class="btn btn-secondary" title="Aide">
+                <span class="icon">❓</span> Aide
+            </button>
+        </div>
+        <div class="header-right">
+            <!-- Placeholder for future zoom controls -->
+        </div>
+    </header>
+
+    <!-- Main container -->
+    <div class="main-container">
+        <!-- Left toolbar -->
+        <aside class="toolbar">
+            <h3>Outils</h3>
+            <div class="tool-buttons">
+                <button id="tool-select" class="tool-btn active" data-tool="select" title="Mode Sélection (V)">
+                    <span class="icon">↖</span>
+                    <span class="label">Sélection</span>
+                </button>
+                <button id="tool-entity" class="tool-btn" data-tool="entity" title="Ajouter Entité (E)">
+                    <span class="icon">▭</span>
+                    <span class="label">Entité</span>
+                </button>
+                <button id="tool-association" class="tool-btn" data-tool="association" title="Ajouter Association (A)">
+                    <span class="icon">⬭</span>
+                    <span class="label">Association</span>
+                </button>
+                <button id="tool-connection" class="tool-btn" data-tool="connection" title="Mode Connexion (C)">
+                    <span class="icon">⟷</span>
+                    <span class="label">Connexion</span>
+                </button>
+            </div>
+            <div class="toolbar-divider"></div>
+            <div class="tool-info">
+                <p id="tool-hint" class="hint-text">Sélectionnez un outil</p>
+            </div>
+            <div class="toolbar-divider"></div>
+            <div class="shortcuts">
+                <h4>Raccourcis</h4>
+                <ul>
+                    <li><kbd>V</kbd> Sélection</li>
+                    <li><kbd>E</kbd> Entité</li>
+                    <li><kbd>A</kbd> Association</li>
+                    <li><kbd>C</kbd> Connexion</li>
+                    <li><kbd>Del</kbd> Supprimer</li>
+                    <li><kbd>Ctrl+Z</kbd> Annuler</li>
+                    <li><kbd>Ctrl+Y</kbd> Rétablir</li>
+                    <li><kbd>Ctrl+C</kbd> Copier</li>
+                    <li><kbd>Ctrl+V</kbd> Coller</li>
+                </ul>
+            </div>
+        </aside>
+
+        <!-- Canvas -->
+        <main class="canvas-container">
+            <div id="canvas-container" style="width: 100%; height: 100%;"></div>
+        </main>
+
+        <!-- Right properties panel -->
+        <aside class="properties-panel">
+            <h3>Propriétés</h3>
+            <div id="properties-content">
+                <div class="properties-empty">
+                    <p>Sélectionnez un élément pour voir ses propriétés.</p>
+                    <div class="help-section">
+                        <h4>Guide rapide</h4>
+                        <ul>
+                            <li><strong>Entité:</strong> Double-clic pour éditer</li>
+                            <li><strong>Association:</strong> Double-clic pour éditer</li>
+                            <li><strong>Connexion:</strong> Cliquez pour éditer cardinalité</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Entity Edit Modal -->
+    <div id="entity-modal" class="modal-overlay">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2>Édition de l'entité</h2>
+                <button id="entity-modal-close" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-section">
+                    <label class="modal-label">Nom de l'entité</label>
+                    <input type="text" id="entity-modal-name" class="modal-input" placeholder="Nom de l'entité">
+                </div>
+
+                <div class="modal-section">
+                    <label class="modal-label">Attributs</label>
+                    <div id="entity-modal-attributes" class="attributes-container"></div>
+                    <button id="entity-add-attribute" class="btn btn-add">+ Ajouter un attribut</button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="entity-modal-cancel" class="btn btn-secondary">Annuler</button>
+                <button id="entity-modal-confirm" class="btn btn-primary">Confirmer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Association Edit Modal -->
+    <div id="association-modal" class="modal-overlay">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2>Édition de l'association</h2>
+                <button id="assoc-modal-close" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-section">
+                    <label class="modal-label">Nom de l'association</label>
+                    <input type="text" id="assoc-modal-name" class="modal-input" placeholder="Nom de l'association">
+                </div>
+
+                <div class="modal-section">
+                    <label class="modal-label">Connexions</label>
+                    <div id="assoc-modal-connections" class="connections-container"></div>
+                    <p class="help-text">Utilisez l'outil Connexion pour relier cette association à des entités.</p>
+                </div>
+
+                <div class="modal-section">
+                    <label class="modal-label">Attributs de l'association</label>
+                    <div id="assoc-modal-attributes" class="attributes-container"></div>
+                    <button id="assoc-add-attribute" class="btn btn-add">+ Ajouter un attribut</button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="assoc-modal-delete" class="btn btn-danger">Supprimer l'association</button>
+                <button id="assoc-modal-cancel" class="btn btn-secondary">Annuler</button>
+                <button id="assoc-modal-confirm" class="btn btn-primary">Confirmer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for import JSON -->
+    <div id="import-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Importer un diagramme JSON</h2>
+                <button id="import-modal-close" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Sélectionnez un fichier JSON ou collez le contenu :</p>
+                <input type="file" id="import-file" accept=".json" style="margin-bottom: 10px;">
+                <textarea id="import-data" rows="15" placeholder='{"entities": [...], "associations": [...], "connections": [...]}'></textarea>
+            </div>
+            <div class="modal-footer">
+                <button id="import-modal-cancel" class="btn btn-secondary">Annuler</button>
+                <button id="import-confirm" class="btn btn-primary">Importer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for export JSON -->
+    <div id="export-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Exporter le diagramme JSON</h2>
+                <button id="export-modal-close" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Copiez le JSON ci-dessous ou téléchargez le fichier :</p>
+                <textarea id="export-data" rows="15" readonly></textarea>
+            </div>
+            <div class="modal-footer">
+                <button id="export-copy" class="btn btn-secondary">Copier</button>
+                <button id="export-download" class="btn btn-primary">Télécharger</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for help -->
+    <div id="help-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Mode d'emploi - Modèle Entité-Association (Merise)</h2>
+                <button id="help-modal-close" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="help-content">
+                    <section>
+                        <h3>Principe du modèle Entité-Association</h3>
+                        <p>Ce modèle suit la notation Merise/Chen où :</p>
+                        <ul>
+                            <li><strong>Entités</strong> (rectangles) : représentent les objets métier</li>
+                            <li><strong>Associations</strong> (ellipses vertes) : représentent les liens entre entités</li>
+                            <li><strong>Connexions</strong> : relient les associations aux entités avec des cardinalités</li>
+                        </ul>
+                    </section>
+
+                    <section>
+                        <h3>Actions principales</h3>
+                        <ul>
+                            <li><strong>Créer une entité:</strong> Cliquer sur "Entité" puis sur le canvas</li>
+                            <li><strong>Créer une association:</strong> Cliquer sur "Association" puis sur le canvas</li>
+                            <li><strong>Créer une connexion:</strong> Cliquer sur "Connexion", puis sur une association, puis sur une entité</li>
+                            <li><strong>Éditer:</strong> Double-clic sur une entité ou association</li>
+                            <li><strong>Supprimer:</strong> Sélectionner puis appuyer sur Delete</li>
+                        </ul>
+                    </section>
+
+                    <section>
+                        <h3>Édition des attributs</h3>
+                        <p>Double-cliquez sur une entité ou association pour ouvrir la modale d'édition complète :</p>
+                        <ul>
+                            <li>Ajouter, modifier, supprimer des attributs</li>
+                            <li>Définir PK (clé primaire), UQ (unique), NULL, DEFAULT</li>
+                            <li>Choisir le type SQL (INTEGER, VARCHAR, etc.)</li>
+                            <li>Pour ENUM/SET : définir les valeurs possibles</li>
+                            <li>Réordonner les attributs avec les flèches ↑↓</li>
+                        </ul>
+                        <p><strong>Important:</strong> Les modifications ne sont enregistrées que si vous cliquez sur "Confirmer"</p>
+                    </section>
+
+                    <section>
+                        <h3>Navigation</h3>
+                        <ul>
+                            <li><strong>Pan (déplacement):</strong> Cliquer-glisser sur une zone vide</li>
+                            <li><strong>Zoom:</strong> Molette de souris (centré sur le curseur)</li>
+                            <li><strong>Zoom boutons:</strong> Utiliser + / - dans le header</li>
+                        </ul>
+                    </section>
+
+                    <section>
+                        <h3>Raccourcis clavier</h3>
+                        <table class="shortcuts-table">
+                            <tr><td><kbd>V</kbd></td><td>Mode Sélection</td></tr>
+                            <tr><td><kbd>E</kbd></td><td>Mode Entité</td></tr>
+                            <tr><td><kbd>A</kbd></td><td>Mode Association</td></tr>
+                            <tr><td><kbd>C</kbd></td><td>Mode Connexion</td></tr>
+                            <tr><td><kbd>Delete</kbd></td><td>Supprimer la sélection</td></tr>
+                            <tr><td><kbd>Ctrl+Z</kbd></td><td>Annuler</td></tr>
+                            <tr><td><kbd>Ctrl+Y</kbd> ou <kbd>Ctrl+Shift+Z</kbd></td><td>Rétablir</td></tr>
+                            <tr><td><kbd>Ctrl+C</kbd></td><td>Copier</td></tr>
+                            <tr><td><kbd>Ctrl+V</kbd></td><td>Coller</td></tr>
+                            <tr><td><kbd>Shift+Clic</kbd></td><td>Sélection multiple</td></tr>
+                            <tr><td><kbd>Clic droit</kbd></td><td>Menu contextuel</td></tr>
+                            <tr><td><kbd>Échap</kbd></td><td>Annuler action en cours</td></tr>
+                        </table>
+                    </section>
+
+                    <section>
+                        <h3>Cardinalités</h3>
+                        <p>Les cardinalités disponibles sont :</p>
+                        <ul>
+                            <li><strong>0,1</strong> : Zéro ou un</li>
+                            <li><strong>1,1</strong> : Exactement un</li>
+                            <li><strong>0,n</strong> : Zéro ou plusieurs</li>
+                            <li><strong>1,n</strong> : Un ou plusieurs</li>
+                        </ul>
+                    </section>
+
+                    <section>
+                        <h3>Associations n-aires</h3>
+                        <p>Une association peut relier plus de 2 entités. Créez simplement plusieurs connexions depuis la même association vers différentes entités.</p>
+                    </section>
+
+                    <section>
+                        <h3>Sauvegarde</h3>
+                        <ul>
+                            <li>Le diagramme est <strong>automatiquement sauvegardé</strong> dans le navigateur</li>
+                            <li>Utilisez <strong>Exporter</strong> pour télécharger le JSON</li>
+                            <li>Utilisez <strong>Importer</strong> pour charger un JSON</li>
+                        </ul>
+                    </section>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="help-modal-confirm" class="btn btn-primary">Fermer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context menu -->
+    <div id="context-menu" class="context-menu" style="display: none;">
+        <ul>
+            <li id="ctx-edit">Éditer</li>
+            <li id="ctx-copy">Copier</li>
+            <li id="ctx-paste">Coller</li>
+            <li id="ctx-delete">Supprimer</li>
+        </ul>
+    </div>
+
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+═════════════════════════════════════════════════════════
+  ⚠️  LISEZ CECI EN PREMIER - PROBLÈME CORRIGÉ ⚠️
+═════════════════════════════════════════════════════════
+
+J'ai identifié et corrigé le problème principal :
+Le canvas n'avait pas de hauteur visible !
+
+═════════════════════════════════════════════════════════
+
+📝 ÉTAPES POUR TESTER (DANS L'ORDRE)
+───────────────────────────────────────────────────────────
+
+1️⃣  OUVRIR LE SERVEUR
+
+   Mac/Linux :  ./lancer.sh
+   Windows :    lancer.bat
+
+   OU manuellement :
+   php -S localhost:8000
+
+
+2️⃣  TESTER LA VERSION DEBUG (Simple)
+
+   Ouvrir : http://localhost:8000/debug.html
+
+   ✅ Vous DEVEZ voir :
+      - Une grille grise en fond
+      - Un log vert en haut à droite
+      - Des boutons en haut
+
+   📝 Testez :
+      - Cliquer "Entité" → Cliquer sur le canvas
+      - Un rectangle bleu doit apparaître !
+      - Le log affiche "Entité créée..."
+
+
+3️⃣  SI DEBUG FONCTIONNE → Tester l'app complète
+
+   Ouvrir : http://localhost:8000/index.html
+
+   ✅ Vous DEVEZ voir :
+      - Header noir en haut
+      - Grille grise au centre
+      - Panneau gauche (outils)
+      - Panneau droit (propriétés)
+
+   📝 Ouvrir la Console (F12) :
+      - Vous devriez voir :
+        ✓ DiagramState créé
+        ✓ CanvasRenderer créé
+        ✓ Stage créé: XXXXxXXXX
+        ✅ Application prête !
+
+
+4️⃣  CRÉER UNE ENTITÉ
+
+   a) Cliquer sur "▭ Entité" (barre de gauche)
+   b) Le curseur devient une croix
+   c) Cliquer n'importe où sur le canvas (zone grise)
+   d) Un rectangle BLEU doit apparaître
+   e) Dans la console : "Entité créée: ..."
+
+
+5️⃣  SI ÇA NE MARCHE TOUJOURS PAS
+
+   Ouvrir Console (F12) et chercher :
+
+   ❌ Erreurs en ROUGE → Me les envoyer
+
+   Erreurs possibles :
+   - "Container not found" → Problème HTML
+   - "Cannot read property..." → Problème JavaScript
+   - "Failed to load module" → Problème de chemin
+
+═════════════════════════════════════════════════════════
+
+🔧 CORRECTIONS APPLIQUÉES
+───────────────────────────────────────────────────────────
+
+✅ HTML : Supprimé canvas-wrapper inutile
+✅ CSS : Ajouté style inline pour taille du canvas
+✅ Renderer : Fallback dimensions si container vide
+✅ Logs : Ajouté logs de débogage partout
+✅ Debug : Créé debug.html ultra-simple pour tester
+
+═════════════════════════════════════════════════════════
+
+📞 QUE FAIRE SI PROBLÈME PERSISTE
+───────────────────────────────────────────────────────────
+
+1. Ouvrir debug.html en premier (version simple)
+2. Si debug.html marche mais pas index.html :
+   → Problème dans l'app complète
+   → Me donner les erreurs console
+
+3. Si debug.html ne marche PAS non plus :
+   → Problème de serveur ou modules
+   → Vérifier que vous êtes sur http://localhost:8000
+   → PAS file:/// (ne marchera jamais)
+
+4. Copier-coller les erreurs de la console
+
+═════════════════════════════════════════════════════════
+
+🎯 RÉSUMÉ RAPIDE
+───────────────────────────────────────────────────────────
+
+1. ./lancer.sh (ou lancer.bat)
+2. Ouvrir http://localhost:8000/debug.html
+3. Cliquer "Entité" puis sur le canvas
+4. Si marche → Tester http://localhost:8000/index.html
+5. Si ne marche pas → Console F12 → Erreurs ?
+
+═════════════════════════════════════════════════════════

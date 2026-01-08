@@ -1,0 +1,174 @@
+═══════════════════════════════════════════════════════════
+  🚀 TESTEZ MAINTENANT - 3 ÉTAPES SIMPLES
+═══════════════════════════════════════════════════════════
+
+Le problème était : Canvas invisible (hauteur = 0)
+Le problème est maintenant CORRIGÉ.
+
+═══════════════════════════════════════════════════════════
+
+ÉTAPE 1 : TEST RAPIDE (10 secondes)
+───────────────────────────────────────────────────────────
+
+Double-cliquez sur :  SIMPLE.html
+
+✅ Ce que vous DEVEZ voir immédiatement :
+   • Grille grise en fond d'écran
+   • Boutons en haut
+   • Info en bas à gauche
+
+✅ Testez :
+   1. Cliquez sur "▭ Entité"
+   2. Cliquez n'importe où sur le canvas
+   3. Un RECTANGLE BLEU apparaît
+
+✅ Si ça marche → PARFAIT ! Passez à l'étape 2
+❌ Si ça ne marche pas → Essayez un autre navigateur
+
+
+═══════════════════════════════════════════════════════════
+
+ÉTAPE 2 : LANCER LE SERVEUR
+───────────────────────────────────────────────────────────
+
+Mac/Linux :
+   ./lancer.sh
+
+Windows :
+   lancer.bat
+
+Ou manuellement :
+   php -S localhost:8000
+
+→ Le serveur démarre sur http://localhost:8000
+
+
+═══════════════════════════════════════════════════════════
+
+ÉTAPE 3 : TESTER L'APP COMPLÈTE
+───────────────────────────────────────────────────────────
+
+Ouvrir dans le navigateur :
+   http://localhost:8000/index.html
+
+✅ Ce que vous DEVEZ voir :
+   • Header noir en haut avec boutons
+   • Barre d'outils à gauche
+   • Canvas gris au centre avec GRILLE
+   • Panneau propriétés à droite
+
+✅ Ouvrir la Console (F12) :
+   Vous devriez voir :
+   🚀 Initialisation de l'application...
+   ✓ DiagramState créé
+   ✓ CanvasRenderer créé
+   ✓ Stage créé: XXXXxXXXX
+   ✅ Application prête !
+
+✅ Créer une entité :
+   1. Cliquer sur "▭ Entité" (barre gauche)
+   2. Le curseur devient une croix
+   3. Cliquer sur le canvas gris
+   4. Un rectangle BLEU apparaît
+   5. Dans la console : "Entité créée: ..."
+
+
+═══════════════════════════════════════════════════════════
+
+🐛 SI PROBLÈME DANS index.html
+───────────────────────────────────────────────────────────
+
+1. Ouvrir Console (F12)
+2. Chercher les erreurs en ROUGE
+3. Copier-coller les erreurs
+
+
+Erreurs possibles :
+
+❌ "Container canvas-container not found"
+   → index.html pas à jour
+   → Re-télécharger index.html
+
+❌ "Failed to load module"
+   → Chemin incorrect ou serveur pas lancé
+   → Vérifier que vous êtes sur http://localhost:8000
+   → PAS file:///
+
+❌ "Stage créé: 0x0"
+   → Canvas n'a pas de taille
+   → Vérifier le CSS
+
+
+═══════════════════════════════════════════════════════════
+
+📋 CHECKLIST RAPIDE
+───────────────────────────────────────────────────────────
+
+□ SIMPLE.html fonctionne (grille visible, entités créables)
+□ Serveur lancé (./lancer.sh ou lancer.bat)
+□ index.html ouvert sur http://localhost:8000
+□ Grille visible dans index.html
+□ Console sans erreur rouge (F12)
+□ Entité créable (clic bouton → clic canvas → rectangle bleu)
+
+
+═══════════════════════════════════════════════════════════
+
+🎯 FICHIERS À TESTER (dans l'ordre)
+───────────────────────────────────────────────────────────
+
+1️⃣  SIMPLE.html
+   • Fonctionne sans serveur
+   • Double-clic pour ouvrir
+   • Test rapide de base
+
+2️⃣  debug.html
+   • Avec serveur : http://localhost:8000/debug.html
+   • Logs visibles en haut à droite
+   • Version intermédiaire
+
+3️⃣  index.html
+   • Avec serveur : http://localhost:8000/index.html
+   • App complète avec tous les outils
+   • Ouvrir Console (F12) pour logs
+
+
+═══════════════════════════════════════════════════════════
+
+💡 ASTUCE : Test en 10 secondes
+───────────────────────────────────────────────────────────
+
+Double-cliquez SIMPLE.html
+→ Si la grille apparaît → Tout fonctionne
+→ Si rien n'apparaît → Problème de navigateur
+
+SIMPLE.html fonctionne TOUJOURS car :
+• Pas de modules ES6
+• Pas besoin de serveur
+• Tout dans un seul fichier
+
+
+═══════════════════════════════════════════════════════════
+
+📞 BESOIN D'AIDE ?
+───────────────────────────────────────────────────────────
+
+Si problème persiste :
+1. Tester SIMPLE.html en premier
+2. Ouvrir Console (F12) dans index.html
+3. Copier les erreurs rouges
+4. Me les envoyer
+
+
+═══════════════════════════════════════════════════════════
+
+🎉 C'EST CORRIGÉ !
+───────────────────────────────────────────────────────────
+
+Le problème principal (canvas invisible) est résolu.
+Les 3 fichiers HTML devraient tous fonctionner maintenant.
+
+Testez SIMPLE.html en premier pour confirmer.
+
+
+═══════════════════════════════════════════════════════════

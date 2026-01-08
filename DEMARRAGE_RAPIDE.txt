@@ -1,0 +1,108 @@
+═══════════════════════════════════════════════════════════
+  ÉDITEUR E-A (MERISE) - DÉMARRAGE RAPIDE
+═══════════════════════════════════════════════════════════
+
+📦 LANCEMENT (Choisissez UNE méthode)
+───────────────────────────────────────────────────────────
+
+▶ MÉTHODE 1 : Script automatique (Le plus simple)
+
+  Mac/Linux :
+    ./lancer.sh
+
+  Windows :
+    lancer.bat
+
+  ➜ Détecte automatiquement Node.js, PHP ou Python
+  ➜ Ouvre le navigateur automatiquement
+
+
+▶ MÉTHODE 2 : VS Code (Recommandé pour dev)
+
+  1. Installer extension "Live Server" dans VS Code
+  2. Clic droit sur index.html → "Open with Live Server"
+
+
+▶ MÉTHODE 3 : Ligne de commande manuelle
+
+  Node.js :  npx http-server -p 8000
+  PHP :      php -S localhost:8000
+  Python 3 : python3 -m http.server 8000
+
+  Puis ouvrir : http://localhost:8000
+
+═══════════════════════════════════════════════════════════
+
+🎨 FONCTIONNALITÉS PRINCIPALES
+───────────────────────────────────────────────────────────
+
+✅ Créer Entité       → Clic bouton "Entité" puis clic canvas
+✅ Créer Association  → Clic bouton "Association" puis clic canvas
+✅ Créer Connexion    → Clic "Connexion" > association > entité
+✅ Éditer            → Double-clic sur un élément
+✅ Déplacer          → Drag & drop
+✅ Supprimer         → Sélectionner puis Delete (ou clic droit)
+
+🎛️  NOUVEAUX CONTRÔLES
+───────────────────────────────────────────────────────────
+
+⊞  Grille  → Afficher/masquer la grille de fond
+🧲 Snap    → Aligner automatiquement sur la grille
+
+═══════════════════════════════════════════════════════════
+
+⌨️  RACCOURCIS CLAVIER
+───────────────────────────────────────────────────────────
+
+V          Mode Sélection
+E          Mode Entité
+A          Mode Association
+C          Mode Connexion
+
+Ctrl+Z     Annuler
+Ctrl+Y     Rétablir
+Ctrl+C     Copier
+Ctrl+V     Coller
+Delete     Supprimer
+
+═══════════════════════════════════════════════════════════
+
+📚 DOCUMENTATION DÉTAILLÉE
+───────────────────────────────────────────────────────────
+
+• COMMENT_LANCER.md        → Toutes les options de lancement
+• CORRECTIONS_FINALES.md   → Liste des bugs corrigés
+• README.md                → Documentation complète
+• BUGFIXES.md              → Détails techniques
+
+═══════════════════════════════════════════════════════════
+
+❓ PROBLÈMES FRÉQUENTS
+───────────────────────────────────────────────────────────
+
+Q: Pourquoi un serveur HTTP ?
+A: Les modules ES6 (import/export) ne fonctionnent pas avec
+   file:// pour des raisons de sécurité. Un serveur local
+   est obligatoire.
+
+Q: Je n'ai rien installé, que faire ?
+A: Solution la plus simple : VS Code + extension "Live Server"
+   (gratuit, pas de ligne de commande)
+
+Q: Les entités ne se créent pas ?
+A: 1. Vérifiez la console (F12)
+   2. Cliquez bien sur "Entité" avant de cliquer sur le canvas
+   3. Vous devriez voir "Entité créée: ..." dans la console
+
+Q: La grille n'apparaît pas ?
+A: Cliquez sur le bouton "⊞ Grille" dans le header
+
+═══════════════════════════════════════════════════════════
+
+🚀 DÉMARREZ MAINTENANT !
+───────────────────────────────────────────────────────────
+
+  Mac/Linux :  ./lancer.sh
+  Windows :    lancer.bat
+
+═══════════════════════════════════════════════════════════

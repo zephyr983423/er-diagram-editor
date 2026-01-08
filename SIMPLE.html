@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ER Diagram - Version Simple</title>
+    <script src="https://unpkg.com/konva@9/konva.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; overflow: hidden; }
+
+        #header {
+            background: #1e293b;
+            color: white;
+            padding: 12px 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        h1 { font-size: 18px; margin: 0; flex: 1; }
+
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            background: #475569;
+            color: white;
+            transition: all 0.2s;
+        }
+
+        button:hover { background: #334155; }
+        button.active { background: #2563eb; }
+        button.danger { background: #ef4444; }
+        button.danger:hover { background: #dc2626; }
+
+        #canvas-container {
+            width: 100vw;
+            height: calc(100vh - 50px);
+            background: white;
+        }
+
+        #info {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            max-width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>📐 Éditeur E-A (Version Simple)</h1>
+        <button id="btn-select" class="active">✋ Sélection</button>
+        <button id="btn-entity">▭ Entité</button>
+        <button id="btn-association">⬭ Association</button>
+        <button id="btn-grid" class="active">⊞ Grille</button>
+        <button id="btn-clear" class="danger">🗑 Effacer</button>
+    </div>
+    <div id="canvas-container"></div>
+    <div id="info">Mode: Sélection | Entités: 0 | Associations: 0</div>
+
+    <script>
+        // ==================== CONFIG ====================
+        const GRID_SIZE = 20;
+        const ENTITY_WIDTH = 220;
+        const ENTITY_HEIGHT = 120;
+        const ASSOC_WIDTH = 160;
+        const ASSOC_HEIGHT = 100;
+
+        // ==================== STATE ====================
+        let currentTool = 'select';
+        let showGrid = true;
+        let entities = [];
+        let associations = [];
+        let nextEntityId = 1;
+        let nextAssocId = 1;
+
+        // ==================== CREATE STAGE ====================
+        const container = document.getElementById('canvas-container');
+        const stage = new Konva.Stage({
+            container: 'canvas-container',
+            width: container.offsetWidth,
+            height: container.offsetHeight
+        });
+
+        const gridLayer = new Konva.Layer();
+        const nodeLayer = new Konva.Layer();
+        stage.add(gridLayer);
+        stage.add(nodeLayer);
+
+        // ==================== DRAW GRID ====================
+        function drawGrid() {
+            gridLayer.destroyChildren();
+            if (!showGrid) {
+                gridLayer.batchDraw();
+                return;
+            }
+
+            const width = stage.width();
+            const height = stage.height();
+
+            // Vertical lines
+            for (let x = 0; x <= width; x += GRID_SIZE) {
+                gridLayer.add(new Konva.Line({
+                    points: [x, 0, x, height],
+                    stroke: '#e2e8f0',
+                    strokeWidth: 1
+                }));
+            }
+
+            // Horizontal lines
+            for (let y = 0; y <= height; y += GRID_SIZE) {
+                gridLayer.add(new Konva.Line({
+                    points: [0, y, width, y],
+                    stroke: '#e2e8f0',
+                    strokeWidth: 1
+                }));
+            }
+
+            gridLayer.batchDraw();
+        }
+
+        drawGrid();
+
+        // ==================== CREATE ENTITY ====================
+        function createEntity(x, y) {
+            const id = nextEntityId++;
+            const name = 'Entité ' + id;
+
+            const entity = { id, name, x, y, type: 'entity' };
+            entities.push(entity);
+
+            const group = new Konva.Group({
+                x: x,
+                y: y,
+                draggable: true
+            });
+
+            // Background
+            const rect = new Konva.Rect({
+                width: ENTITY_WIDTH,
+                height: ENTITY_HEIGHT,
+                fill: 'white',
+                stroke: '#2563eb',
+                strokeWidth: 2,
+                cornerRadius: 8,
+                shadowColor: 'black',
+                shadowBlur: 10,
+                shadowOpacity: 0.1
+            });
+
+            // Header
+            const header = new Konva.Rect({
+                width: ENTITY_WIDTH,
+                height: 40,
+                fill: '#2563eb',
+                cornerRadius: [8, 8, 0, 0]
+            });
+
+            // Title
+            const title = new Konva.Text({
+                text: name,
+                x: 0,
+                y: 12,
+                width: ENTITY_WIDTH,
+                fontSize: 16,
+                fontStyle: 'bold',
+                fill: 'white',
+                align: 'center'
+            });
+
+            // Attribute example
+            const attr = new Konva.Text({
+                text: '🔑 id: INTEGER',
+                x: 12,
+                y: 55,
+                fontSize: 13,
+                fill: '#1e293b'
+            });
+
+            group.add(rect, header, title, attr);
+
+            group.on('dragmove', () => {
+                entity.x = group.x();
+                entity.y = group.y();
+            });
+
+            group.on('click', (e) => {
+                e.cancelBubble = true;
+            });
+
+            nodeLayer.add(group);
+            nodeLayer.batchDraw();
+
+            updateInfo();
+            console.log('✓ Entité créée:', name, 'à', Math.round(x), Math.round(y));
+        }
+
+        // ==================== CREATE ASSOCIATION ====================
+        function createAssociation(x, y) {
+            const id = nextAssocId++;
+            const name = 'Assoc ' + id;
+
+            const assoc = { id, name, x, y, type: 'association' };
+            associations.push(assoc);
+
+            const group = new Konva.Group({
+                x: x,
+                y: y,
+                draggable: true
+            });
+
+            // Background
+            const rect = new Konva.Rect({
+                x: -ASSOC_WIDTH / 2,
+                y: -ASSOC_HEIGHT / 2,
+                width: ASSOC_WIDTH,
+                height: ASSOC_HEIGHT,
+                fill: '#d1fae5',
+                stroke: '#10b981',
+                strokeWidth: 2,
+                cornerRadius: 15,
+                shadowColor: 'black',
+                shadowBlur: 10,
+                shadowOpacity: 0.1
+            });
+
+            // Title
+            const title = new Konva.Text({
+                text: name,
+                x: -ASSOC_WIDTH / 2,
+                y: -10,
+                width: ASSOC_WIDTH,
+                fontSize: 14,
+                fontStyle: 'bold',
+                fill: '#065f46',
+                align: 'center'
+            });
+
+            group.add(rect, title);
+
+            group.on('dragmove', () => {
+                assoc.x = group.x();
+                assoc.y = group.y();
+            });
+
+            group.on('click', (e) => {
+                e.cancelBubble = true;
+            });
+
+            nodeLayer.add(group);
+            nodeLayer.batchDraw();
+
+            updateInfo();
+            console.log('✓ Association créée:', name, 'à', Math.round(x), Math.round(y));
+        }
+
+        // ==================== UPDATE INFO ====================
+        function updateInfo() {
+            const toolName = {
+                'select': 'Sélection',
+                'entity': 'Entité (cliquez sur le canvas)',
+                'association': 'Association (cliquez sur le canvas)'
+            };
+
+            document.getElementById('info').textContent =
+                `Mode: ${toolName[currentTool]} | Entités: ${entities.length} | Associations: ${associations.length}`;
+        }
+
+        // ==================== BUTTON HANDLERS ====================
+        document.getElementById('btn-select').onclick = () => {
+            currentTool = 'select';
+            stage.container().style.cursor = 'default';
+            document.querySelectorAll('#header button').forEach(b => b.classList.remove('active'));
+            document.getElementById('btn-select').classList.add('active');
+            updateInfo();
+        };
+
+        document.getElementById('btn-entity').onclick = () => {
+            currentTool = 'entity';
+            stage.container().style.cursor = 'crosshair';
+            document.querySelectorAll('#header button').forEach(b => b.classList.remove('active'));
+            document.getElementById('btn-entity').classList.add('active');
+            updateInfo();
+        };
+
+        document.getElementById('btn-association').onclick = () => {
+            currentTool = 'association';
+            stage.container().style.cursor = 'crosshair';
+            document.querySelectorAll('#header button').forEach(b => b.classList.remove('active'));
+            document.getElementById('btn-association').classList.add('active');
+            updateInfo();
+        };
+
+        document.getElementById('btn-grid').onclick = () => {
+            showGrid = !showGrid;
+            drawGrid();
+            document.getElementById('btn-grid').classList.toggle('active');
+        };
+
+        document.getElementById('btn-clear').onclick = () => {
+            if (confirm('Tout effacer ?')) {
+                nodeLayer.destroyChildren();
+                entities = [];
+                associations = [];
+                nodeLayer.batchDraw();
+                updateInfo();
+                console.log('✓ Tout effacé');
+            }
+        };
+
+        // ==================== STAGE CLICK ====================
+        stage.on('click', (e) => {
+            if (e.target === stage || e.target.parent === gridLayer) {
+                const pos = stage.getPointerPosition();
+
+                if (currentTool === 'entity') {
+                    createEntity(pos.x, pos.y);
+                    // Auto switch back to select
+                    document.getElementById('btn-select').click();
+                } else if (currentTool === 'association') {
+                    createAssociation(pos.x, pos.y);
+                    // Auto switch back to select
+                    document.getElementById('btn-select').click();
+                }
+            }
+        });
+
+        // ==================== WINDOW RESIZE ====================
+        window.addEventListener('resize', () => {
+            stage.width(container.offsetWidth);
+            stage.height(container.offsetHeight);
+            drawGrid();
+        });
+
+        // ==================== READY ====================
+        console.log('✅ Application prête !');
+        console.log('→ Cliquez sur "Entité" puis sur le canvas');
+        updateInfo();
+    </script>
+</body>
+</html>
