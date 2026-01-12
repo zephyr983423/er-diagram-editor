@@ -3,10 +3,8 @@
 // ===========================
 
 import { CONFIG } from './config.js';
-import { formatAttribute, formatAttributeSimple, calculateAngle, getPerpendicularOffset, snapToGrid, generateId } from './utils.js';
+import { formatAttribute, formatAttributeSimple, calculateAngle, getPerpendicularOffset, snapToGrid } from './utils.js';
 import { MoveNodeCommand } from './commands.js';
-import { Connection } from './models.js';
-import { CreateConnectionCommand } from './commands.js';
 
 export class CanvasRenderer {
     constructor(containerId, state) {
@@ -344,46 +342,18 @@ export class CanvasRenderer {
                     window.app.modalManager.openEntityModal(entity.id);
                 }
                 lastClickTime = 0; // Reset
-                // Clear temp connection on double-click
-                if (window.app) window.app.tempConnection = null;
                 return;
             }
 
             lastClickTime = now;
 
-            // Single click - check for pending connection or memorize entity
+            // Single click - select
             setTimeout(() => {
                 if (lastClickTime === now) { // Only if not followed by another click
-                    // Check if there's a pending connection from an association
-                    if (window.app && window.app.tempConnection && window.app.tempConnection.associationId) {
-                        // Create connection: association → entity
-                        const conn = new Connection(
-                            generateId('conn'),
-                            window.app.tempConnection.associationId,
-                            entity.id,
-                            '1,n',
-                            ''
-                        );
-                        this.state.executeCommand(new CreateConnectionCommand(this.state, conn));
-                        window.app.tempConnection = null;
-                        this.render();
-                        console.log('✓ Connexion créée automatiquement: association → entité');
-                    } else {
-                        // Store this entity for potential connection
-                        if (window.app) {
-                            window.app.tempConnection = {
-                                entityId: entity.id,
-                                entity: entity
-                            };
-                            console.log('→ Entité sélectionnée. Cliquez sur une association pour créer une connexion.');
-                        }
-
-                        // Normal selection
-                        const isMultiSelect = e.evt.shiftKey;
-                        this.state.select({ type: 'entity', id: entity.id }, isMultiSelect);
-                        this.updateSelection();
-                        if (window.app) window.app.updatePropertiesPanel();
-                    }
+                    const isMultiSelect = e.evt.shiftKey;
+                    this.state.select({ type: 'entity', id: entity.id }, isMultiSelect);
+                    this.updateSelection();
+                    if (window.app) window.app.updatePropertiesPanel();
                 }
             }, DOUBLE_CLICK_DELAY);
         });
@@ -529,46 +499,18 @@ export class CanvasRenderer {
                     window.app.modalManager.openAssociationModal(assoc.id);
                 }
                 lastClickTime = 0; // Reset
-                // Clear temp connection on double-click
-                if (window.app) window.app.tempConnection = null;
                 return;
             }
 
             lastClickTime = now;
 
-            // Single click - check for pending entity or memorize association
+            // Single click - select
             setTimeout(() => {
                 if (lastClickTime === now) { // Only if not followed by another click
-                    // Check if there's a pending connection from an entity
-                    if (window.app && window.app.tempConnection && window.app.tempConnection.entityId) {
-                        // Create connection: entity → association
-                        const conn = new Connection(
-                            generateId('conn'),
-                            assoc.id,
-                            window.app.tempConnection.entityId,
-                            '1,n',
-                            ''
-                        );
-                        this.state.executeCommand(new CreateConnectionCommand(this.state, conn));
-                        window.app.tempConnection = null;
-                        this.render();
-                        console.log('✓ Connexion créée automatiquement: entité → association');
-                    } else {
-                        // Store this association for potential connection
-                        if (window.app) {
-                            window.app.tempConnection = {
-                                associationId: assoc.id,
-                                association: assoc
-                            };
-                            console.log('→ Association sélectionnée. Cliquez sur une entité pour créer une connexion.');
-                        }
-
-                        // Also select normally
-                        const isMultiSelect = e.evt.shiftKey;
-                        this.state.select({ type: 'association', id: assoc.id }, isMultiSelect);
-                        this.updateSelection();
-                        if (window.app) window.app.updatePropertiesPanel();
-                    }
+                    const isMultiSelect = e.evt.shiftKey;
+                    this.state.select({ type: 'association', id: assoc.id }, isMultiSelect);
+                    this.updateSelection();
+                    if (window.app) window.app.updatePropertiesPanel();
                 }
             }, DOUBLE_CLICK_DELAY);
         });
