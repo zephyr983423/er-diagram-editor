@@ -328,120 +328,10 @@ kbd {
 }
 
 /* ===========================
-   PROPERTIES PANEL (RIGHT SIDEBAR)
+   PROPERTIES PANEL (RIGHT SIDEBAR) - REMOVED
    =========================== */
 
-.properties-panel {
-    width: 300px;
-    background: var(--bg-panel);
-    border-left: 1px solid var(--border-color);
-    padding: 20px;
-    overflow-y: auto;
-    box-shadow: var(--shadow-sm);
-}
-
-.properties-panel h3 {
-    font-size: 14px;
-    font-weight: 600;
-    text-transform: uppercase;
-    color: var(--text-secondary);
-    margin-bottom: 16px;
-    letter-spacing: 0.5px;
-}
-
-.properties-empty {
-    color: var(--text-secondary);
-    text-align: center;
-    padding: 20px 0;
-}
-
-.properties-empty p {
-    margin-bottom: 24px;
-}
-
-.help-section {
-    text-align: left;
-    background: var(--bg-main);
-    padding: 16px;
-    border-radius: var(--radius-md);
-}
-
-.help-section h4 {
-    font-size: 13px;
-    font-weight: 600;
-    margin-bottom: 12px;
-    color: var(--text-primary);
-}
-
-.help-section ul {
-    list-style: none;
-}
-
-.help-section li {
-    padding: 6px 0;
-    font-size: 13px;
-    line-height: 1.5;
-    color: var(--text-secondary);
-}
-
-.help-section strong {
-    color: var(--text-primary);
-}
-
-/* Property form elements */
-.property-group {
-    margin-bottom: 20px;
-}
-
-.property-label {
-    display: block;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin-bottom: 8px;
-}
-
-.property-hint {
-    font-size: 12px;
-    color: var(--text-secondary);
-    margin: 4px 0;
-}
-
-.property-input {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    font-size: 14px;
-    transition: border-color 0.2s;
-}
-
-.property-input:focus {
-    outline: none;
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-}
-
-.property-select {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    font-size: 14px;
-    background: white;
-    cursor: pointer;
-}
-
-.btn-add {
-    width: 100%;
-    margin-top: 12px;
-    background: var(--success-color);
-    color: white;
-}
-
-.btn-add:hover {
-    background: #059669;
-}
+/* Panel removed - using only left toolbar and canvas now */
 
 /* ===========================
    MODALS
@@ -950,10 +840,6 @@ kbd {
     .toolbar {
         width: 180px;
     }
-
-    .properties-panel {
-        width: 250px;
-    }
 }
 
 @media (max-width: 768px) {
@@ -966,8 +852,7 @@ kbd {
         font-size: 12px;
     }
 
-    .toolbar,
-    .properties-panel {
+    .toolbar {
         position: fixed;
         top: 60px;
         bottom: 0;
@@ -976,8 +861,7 @@ kbd {
         transition: transform 0.3s;
     }
 
-    .toolbar.open,
-    .properties-panel.open {
+    .toolbar.open {
         transform: translateX(0);
     }
 

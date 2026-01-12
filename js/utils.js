@@ -7,12 +7,39 @@ export function generateId(prefix = 'id') {
 }
 
 export function formatAttribute(attr) {
-    let text = '';
-    if (attr.isPK) text += '🔑 ';
-    text += attr.name;
-    if (attr.type) text += `: ${attr.type}`;
-    if (attr.isUQ) text += ' [UQ]';
-    if (!attr.isNull) text += ' [NOT NULL]';
+    let parts = [];
+
+    // Pour les attributs UQ (unique/clés étrangères)
+    if (attr.isUQ && !attr.isPK) {
+        parts.push({ text: '[UQ]', style: 'normal' });
+        parts.push({ text: attr.name, style: 'normal' });
+    }
+    // Pour les clés primaires
+    else if (attr.isPK) {
+        parts.push({ text: attr.name, style: 'pk' });
+    }
+    // Attributs normaux
+    else {
+        parts.push({ text: attr.name, style: 'normal' });
+    }
+
+    // Type entre parenthèses
+    if (attr.type) {
+        parts.push({ text: ` (${attr.type})`, style: 'type' });
+    }
+
+    // NOT NULL seulement pour les attributs non-PK
+    if (!attr.isNull && !attr.isPK) {
+        parts.push({ text: ' [NOT NULL]', style: 'constraint' });
+    }
+
+    return parts;
+}
+
+// Version simple pour les associations (qui n'ont pas besoin de formatage spécial)
+export function formatAttributeSimple(attr) {
+    let text = attr.name;
+    if (attr.type) text += ` (${attr.type})`;
     return text;
 }
 

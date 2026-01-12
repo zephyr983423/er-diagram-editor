@@ -3,8 +3,10 @@
 // ===========================
 
 import { CONFIG } from './config.js';
-import { formatAttribute, calculateAngle, getPerpendicularOffset, snapToGrid } from './utils.js';
+import { formatAttribute, formatAttributeSimple, calculateAngle, getPerpendicularOffset, snapToGrid, generateId } from './utils.js';
 import { MoveNodeCommand } from './commands.js';
+import { Connection } from './models.js';
+import { CreateConnectionCommand } from './commands.js';
 
 export class CanvasRenderer {
     constructor(containerId, state) {
@@ -279,15 +281,38 @@ export class CanvasRenderer {
 
         let yOffset = 50;
         entity.attributes.forEach((attr) => {
-            const attrText = new Konva.Text({
-                text: formatAttribute(attr),
-                x: CONFIG.ENTITY_PADDING,
-                y: yOffset,
-                width: CONFIG.ENTITY_WIDTH - 2 * CONFIG.ENTITY_PADDING,
-                fontSize: 13,
-                fill: '#1e293b'
+            const parts = formatAttribute(attr);
+            let xOffset = CONFIG.ENTITY_PADDING;
+
+            parts.forEach((part) => {
+                let textConfig = {
+                    text: part.text,
+                    x: xOffset,
+                    y: yOffset,
+                    fontSize: 13,
+                    fill: '#1e293b'
+                };
+
+                // Style pour clé primaire : gras et souligné
+                if (part.style === 'pk') {
+                    textConfig.fontStyle = 'bold';
+                    textConfig.textDecoration = 'underline';
+                }
+                // Style pour le type : couleur plus claire
+                else if (part.style === 'type') {
+                    textConfig.fill = '#64748b';
+                }
+                // Style pour les contraintes (NOT NULL)
+                else if (part.style === 'constraint') {
+                    textConfig.fill = '#64748b';
+                    textConfig.fontSize = 11;
+                }
+
+                const textNode = new Konva.Text(textConfig);
+                group.add(textNode);
+                xOffset += textNode.width();
             });
-            group.add(attrText);
+
             yOffset += CONFIG.ATTRIBUTE_HEIGHT;
         });
 
@@ -319,18 +344,46 @@ export class CanvasRenderer {
                     window.app.modalManager.openEntityModal(entity.id);
                 }
                 lastClickTime = 0; // Reset
+                // Clear temp connection on double-click
+                if (window.app) window.app.tempConnection = null;
                 return;
             }
 
             lastClickTime = now;
 
-            // Single click - select
+            // Single click - check for pending connection or memorize entity
             setTimeout(() => {
                 if (lastClickTime === now) { // Only if not followed by another click
-                    const isMultiSelect = e.evt.shiftKey;
-                    this.state.select({ type: 'entity', id: entity.id }, isMultiSelect);
-                    this.updateSelection();
-                    if (window.app) window.app.updatePropertiesPanel();
+                    // Check if there's a pending connection from an association
+                    if (window.app && window.app.tempConnection && window.app.tempConnection.associationId) {
+                        // Create connection: association → entity
+                        const conn = new Connection(
+                            generateId('conn'),
+                            window.app.tempConnection.associationId,
+                            entity.id,
+                            '1,n',
+                            ''
+                        );
+                        this.state.executeCommand(new CreateConnectionCommand(this.state, conn));
+                        window.app.tempConnection = null;
+                        this.render();
+                        console.log('✓ Connexion créée automatiquement: association → entité');
+                    } else {
+                        // Store this entity for potential connection
+                        if (window.app) {
+                            window.app.tempConnection = {
+                                entityId: entity.id,
+                                entity: entity
+                            };
+                            console.log('→ Entité sélectionnée. Cliquez sur une association pour créer une connexion.');
+                        }
+
+                        // Normal selection
+                        const isMultiSelect = e.evt.shiftKey;
+                        this.state.select({ type: 'entity', id: entity.id }, isMultiSelect);
+                        this.updateSelection();
+                        if (window.app) window.app.updatePropertiesPanel();
+                    }
                 }
             }, DOUBLE_CLICK_DELAY);
         });
@@ -436,7 +489,7 @@ export class CanvasRenderer {
 
             assoc.attributes.forEach((attr) => {
                 const attrText = new Konva.Text({
-                    text: formatAttribute(attr),
+                    text: formatAttributeSimple(attr),
                     x: -width / 2 + CONFIG.ASSOCIATION_PADDING,
                     y: yOffset,
                     width: width - CONFIG.ASSOCIATION_PADDING * 2,
@@ -476,18 +529,46 @@ export class CanvasRenderer {
                     window.app.modalManager.openAssociationModal(assoc.id);
                 }
                 lastClickTime = 0; // Reset
+                // Clear temp connection on double-click
+                if (window.app) window.app.tempConnection = null;
                 return;
             }
 
             lastClickTime = now;
 
-            // Single click - select
+            // Single click - check for pending entity or memorize association
             setTimeout(() => {
                 if (lastClickTime === now) { // Only if not followed by another click
-                    const isMultiSelect = e.evt.shiftKey;
-                    this.state.select({ type: 'association', id: assoc.id }, isMultiSelect);
-                    this.updateSelection();
-                    if (window.app) window.app.updatePropertiesPanel();
+                    // Check if there's a pending connection from an entity
+                    if (window.app && window.app.tempConnection && window.app.tempConnection.entityId) {
+                        // Create connection: entity → association
+                        const conn = new Connection(
+                            generateId('conn'),
+                            assoc.id,
+                            window.app.tempConnection.entityId,
+                            '1,n',
+                            ''
+                        );
+                        this.state.executeCommand(new CreateConnectionCommand(this.state, conn));
+                        window.app.tempConnection = null;
+                        this.render();
+                        console.log('✓ Connexion créée automatiquement: entité → association');
+                    } else {
+                        // Store this association for potential connection
+                        if (window.app) {
+                            window.app.tempConnection = {
+                                associationId: assoc.id,
+                                association: assoc
+                            };
+                            console.log('→ Association sélectionnée. Cliquez sur une entité pour créer une connexion.');
+                        }
+
+                        // Also select normally
+                        const isMultiSelect = e.evt.shiftKey;
+                        this.state.select({ type: 'association', id: assoc.id }, isMultiSelect);
+                        this.updateSelection();
+                        if (window.app) window.app.updatePropertiesPanel();
+                    }
                 }
             }, DOUBLE_CLICK_DELAY);
         });
@@ -553,11 +634,32 @@ export class CanvasRenderer {
 
         if (!assoc || !entity) return;
 
+        // Check if this is a self-association (auto-association)
+        const connections = this.state.getConnectionsForAssociation(conn.associationId);
+        const entityConnections = connections.filter(c => c.entityId === entity.id);
+        const isSelfAssociation = entityConnections.length > 1;
+        const connectionIndex = entityConnections.findIndex(c => c.id === conn.id);
+
         // Get association shape info
         const assocShape = this.associationShapes.get(assoc.id);
         const assocWidth = assocShape ? assocShape.width : CONFIG.ASSOCIATION_MIN_WIDTH;
         const assocHeight = assocShape ? assocShape.height : CONFIG.ASSOCIATION_MIN_HEIGHT;
 
+        const group = new Konva.Group({ id: conn.id });
+
+        if (isSelfAssociation) {
+            // Draw curved lines for self-associations
+            this.drawSelfAssociationConnection(group, assoc, entity, conn, connectionIndex, assocWidth, assocHeight);
+        } else {
+            // Normal straight line connection
+            this.drawNormalConnection(group, assoc, entity, conn, assocWidth, assocHeight);
+        }
+
+        this.connectionLayer.add(group);
+        this.connectionShapes.set(conn.id, { group, conn });
+    }
+
+    drawNormalConnection(group, assoc, entity, conn, assocWidth, assocHeight) {
         // Calculate connection points
         const assocPoint = this.getAssociationEdgePoint(assoc, entity, assocWidth, assocHeight);
         const entityPoint = this.getEntityEdgePoint(entity, assoc);
@@ -586,58 +688,176 @@ export class CanvasRenderer {
             x: cardPos.x - 20,
             y: cardPos.y - 10,
             width: 40,
-            fontSize: 12,
+            fontSize: 15,
             fontStyle: 'bold',
             fill: '#1e293b',
             align: 'center'
         });
 
-        const group = new Konva.Group({ id: conn.id });
         group.add(line, cardText);
 
-        // Connection label at midpoint
+        // Connection label at midpoint (without border)
         if (conn.label && conn.label.trim()) {
             const midX = (assocPoint.x + entityPoint.x) / 2;
             const midY = (assocPoint.y + entityPoint.y) / 2;
 
-            const labelBg = new Konva.Rect({
-                x: midX - 40 + perpOffset.x,
-                y: midY - 12 + perpOffset.y,
-                width: 80,
-                height: 24,
-                fill: 'white',
-                stroke: CONFIG.COLORS.connection,
-                strokeWidth: 1,
-                cornerRadius: 4
-            });
+            // Offset label more to the side to avoid overlapping with cardinality
+            const labelOffset = getPerpendicularOffset(angle, 25);
 
             const labelText = new Konva.Text({
                 text: conn.label,
-                x: midX - 40 + perpOffset.x,
-                y: midY - 8 + perpOffset.y,
+                x: midX - 40 + labelOffset.x,
+                y: midY - 8 + labelOffset.y,
                 width: 80,
-                fontSize: 11,
-                fill: '#1e293b',
+                fontSize: 14,
+                fill: '#2563eb',
+                fontStyle: 'italic',
                 align: 'center'
             });
 
-            group.add(labelBg, labelText);
+            group.add(labelText);
         }
 
         line.on('click', () => {
             this.state.select({ type: 'connection', id: conn.id }, false);
             this.updateSelection();
-            if (window.app) window.app.updatePropertiesPanel();
         });
-
-        this.connectionLayer.add(group);
-        this.connectionShapes.set(conn.id, { group, line, conn });
     }
 
-    getAssociationEdgePoint(assoc, targetEntity, width, height) {
-        const entityCenter = this.getEntityCenter(targetEntity);
-        const dx = entityCenter.x - assoc.x;
-        const dy = entityCenter.y - assoc.y;
+    drawSelfAssociationConnection(group, assoc, entity, conn, connectionIndex, assocWidth, assocHeight) {
+        // For self-associations, draw curved lines offset from each other
+        const entityCenter = this.getEntityCenter(entity);
+        const assocCenter = { x: assoc.x, y: assoc.y };
+
+        // Calculate angle from entity to association
+        const baseAngle = calculateAngle(entityCenter, assocCenter);
+
+        // Offset each connection curve differently
+        const curveOffset = connectionIndex === 0 ? -60 : 60;
+        const curveAngle = baseAngle + (curveOffset * Math.PI / 180);
+
+        // Control points for bezier curve
+        const distance = 80;
+        const controlPoint1 = {
+            x: assocCenter.x + Math.cos(curveAngle) * distance,
+            y: assocCenter.y + Math.sin(curveAngle) * distance
+        };
+
+        const controlPoint2 = {
+            x: entityCenter.x + Math.cos(curveAngle + Math.PI / 4) * distance,
+            y: entityCenter.y + Math.sin(curveAngle + Math.PI / 4) * distance
+        };
+
+        // Adjust start and end points to be on edges
+        const assocPoint = this.getAssociationEdgePoint(assoc, controlPoint1, assocWidth, assocHeight);
+        const entityPoint = this.getEntityEdgePoint(entity, controlPoint2);
+
+        // Create bezier curve
+        const curve = new Konva.Line({
+            points: [
+                assocPoint.x, assocPoint.y,
+                controlPoint1.x, controlPoint1.y,
+                controlPoint2.x, controlPoint2.y,
+                entityPoint.x, entityPoint.y
+            ],
+            stroke: CONFIG.COLORS.connection,
+            strokeWidth: 2,
+            lineCap: 'round',
+            tension: 0.3,
+            bezier: true
+        });
+
+        // Calculate midpoint of bezier curve (t=0.5)
+        const t = 0.5;
+        const midX = Math.pow(1-t, 3) * assocPoint.x +
+                     3 * Math.pow(1-t, 2) * t * controlPoint1.x +
+                     3 * (1-t) * Math.pow(t, 2) * controlPoint2.x +
+                     Math.pow(t, 3) * entityPoint.x;
+        const midY = Math.pow(1-t, 3) * assocPoint.y +
+                     3 * Math.pow(1-t, 2) * t * controlPoint1.y +
+                     3 * (1-t) * Math.pow(t, 2) * controlPoint2.y +
+                     Math.pow(t, 3) * entityPoint.y;
+
+        // Calculate perpendicular offset at midpoint
+        // Approximate tangent at midpoint
+        const t1 = 0.48, t2 = 0.52;
+        const x1 = Math.pow(1-t1, 3) * assocPoint.x + 3 * Math.pow(1-t1, 2) * t1 * controlPoint1.x +
+                   3 * (1-t1) * Math.pow(t1, 2) * controlPoint2.x + Math.pow(t1, 3) * entityPoint.x;
+        const y1 = Math.pow(1-t1, 3) * assocPoint.y + 3 * Math.pow(1-t1, 2) * t1 * controlPoint1.y +
+                   3 * (1-t1) * Math.pow(t1, 2) * controlPoint2.y + Math.pow(t1, 3) * entityPoint.y;
+        const x2 = Math.pow(1-t2, 3) * assocPoint.x + 3 * Math.pow(1-t2, 2) * t2 * controlPoint1.x +
+                   3 * (1-t2) * Math.pow(t2, 2) * controlPoint2.x + Math.pow(t2, 3) * entityPoint.x;
+        const y2 = Math.pow(1-t2, 3) * assocPoint.y + 3 * Math.pow(1-t2, 2) * t2 * controlPoint1.y +
+                   3 * (1-t2) * Math.pow(t2, 2) * controlPoint2.y + Math.pow(t2, 3) * entityPoint.y;
+
+        const tangentAngle = Math.atan2(y2 - y1, x2 - x1);
+
+        // Use same distances as normal connections for consistency
+        const cardinalityDistance = CONFIG.LABEL_OFFSET;  // 15px - same as normal connections
+        const labelDistance = 25;  // 25px - same as normal connections
+        const sideMultiplier = connectionIndex === 0 ? 1 : -1;
+
+        // Cardinality on one side
+        const cardPerpX = -Math.sin(tangentAngle) * cardinalityDistance * sideMultiplier;
+        const cardPerpY = Math.cos(tangentAngle) * cardinalityDistance * sideMultiplier;
+
+        // Cardinality at midpoint, offset to one side
+        const cardText = new Konva.Text({
+            text: conn.cardinality,
+            x: midX + cardPerpX - 20,
+            y: midY + cardPerpY - 10,
+            width: 40,
+            fontSize: 15,
+            fontStyle: 'bold',
+            fill: '#1e293b',
+            align: 'center'
+        });
+
+        group.add(curve, cardText);
+
+        // Label at midpoint, on the OPPOSITE side from cardinality
+        if (conn.label && conn.label.trim()) {
+            // Opposite side: negate the multiplier, use same distance as normal connections
+            const labelPerpX = -Math.sin(tangentAngle) * labelDistance * (-sideMultiplier);
+            const labelPerpY = Math.cos(tangentAngle) * labelDistance * (-sideMultiplier);
+
+            const labelText = new Konva.Text({
+                text: conn.label,
+                x: midX + labelPerpX - 40,
+                y: midY + labelPerpY - 10,
+                width: 80,
+                fontSize: 14,
+                fill: '#2563eb',
+                fontStyle: 'italic',
+                align: 'center'
+            });
+
+            group.add(labelText);
+        }
+
+        curve.on('click', () => {
+            this.state.select({ type: 'connection', id: conn.id }, false);
+            this.updateSelection();
+        });
+    }
+
+    getAssociationEdgePoint(assoc, targetEntityOrPoint, width, height) {
+        // Handle both entity objects and simple {x, y} points
+        let targetX, targetY;
+
+        if (targetEntityOrPoint.attributes !== undefined) {
+            // It's an entity
+            const entityCenter = this.getEntityCenter(targetEntityOrPoint);
+            targetX = entityCenter.x;
+            targetY = entityCenter.y;
+        } else {
+            // It's a simple point {x, y}
+            targetX = targetEntityOrPoint.x;
+            targetY = targetEntityOrPoint.y;
+        }
+
+        const dx = targetX - assoc.x;
+        const dy = targetY - assoc.y;
 
         // Calculate intersection with rounded rectangle
         const angle = Math.atan2(dy, dx);
@@ -721,9 +941,13 @@ export class CanvasRenderer {
                 }
             } else if (item.type === 'connection') {
                 const shape = this.connectionShapes.get(item.id);
-                if (shape && shape.line) {
-                    shape.line.stroke(CONFIG.COLORS.connectionSelected);
-                    shape.line.strokeWidth(3);
+                if (shape && shape.group) {
+                    // Find the line or curve in the group
+                    const line = shape.group.findOne('Line');
+                    if (line) {
+                        line.stroke(CONFIG.COLORS.connectionSelected);
+                        line.strokeWidth(3);
+                    }
                 }
             }
         });
