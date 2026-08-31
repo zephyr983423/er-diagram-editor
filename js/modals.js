@@ -4,8 +4,12 @@
 
 import { CONFIG } from './config.js';
 import { generateId } from './utils.js';
-import { Entity, Association, Attribute } from './models.js';
-import { UpdateEntityCommand, UpdateAssociationCommand, DeleteAssociationCommand, DeleteConnectionCommand } from './commands.js';
+import { Entity, Association, Attribute, Connection } from './models.js';
+import { UpdateEntityCommand, UpdateAssociationCommand, DeleteAssociationCommand } from './commands.js';
+
+const escapeHTML = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+}[character]));
 
 export class ModalManager {
     constructor(state, renderer) {
@@ -19,6 +23,7 @@ export class ModalManager {
 
         const modal = document.getElementById('entity-modal');
         modal.classList.add('active');
+        modal.setAttribute('aria-hidden', 'false');
 
         const originalEntity = Entity.fromJSON(entity.toJSON());
 
@@ -27,6 +32,7 @@ export class ModalManager {
         document.getElementById('entity-modal-cancel').onclick = () => {
             Object.assign(entity, originalEntity);
             modal.classList.remove('active');
+            modal.setAttribute('aria-hidden', 'true');
             this.renderer.render();
         };
 
@@ -44,6 +50,10 @@ export class ModalManager {
             }
 
             const names = entity.attributes.map(a => a.name.toLowerCase());
+            if (entity.attributes.some(attribute => !attribute.name.trim())) {
+                alert('Chaque attribut doit avoir un nom.');
+                return;
+            }
             const duplicates = names.filter((n, i) => names.indexOf(n) !== i);
             if (duplicates.length > 0) {
                 alert('Noms d\'attributs en double : ' + duplicates.join(', '));
@@ -55,9 +65,12 @@ export class ModalManager {
             );
 
             modal.classList.remove('active');
+            modal.setAttribute('aria-hidden', 'true');
             this.renderer.render();
             if (window.app) window.app.updatePropertiesPanel();
         };
+
+        requestAnimationFrame(() => document.getElementById('entity-modal-name').focus());
     }
 
     renderEntityModalContent(entity) {
@@ -87,10 +100,10 @@ export class ModalManager {
         div.innerHTML = `
             <div class="attribute-editor-header">
                 <span class="attribute-order">#${index + 1}</span>
-                <input type="text" class="attr-name-input" value="${attr.name}" placeholder="Nom" />
-                <button class="btn-icon btn-move-up" title="Monter" ${index === 0 ? 'disabled' : ''}>↑</button>
-                <button class="btn-icon btn-move-down" title="Descendre" ${index === container.attributes.length - 1 ? 'disabled' : ''}>↓</button>
-                <button class="btn-icon btn-delete-attr" title="Supprimer">🗑</button>
+                <input type="text" class="attr-name-input" value="${escapeHTML(attr.name)}" placeholder="Nom" aria-label="Nom de l’attribut ${index + 1}" />
+                <button type="button" class="btn-icon btn-move-up" title="Monter" aria-label="Monter l’attribut" ${index === 0 ? 'disabled' : ''}>↑</button>
+                <button type="button" class="btn-icon btn-move-down" title="Descendre" aria-label="Descendre l’attribut" ${index === container.attributes.length - 1 ? 'disabled' : ''}>↓</button>
+                <button type="button" class="btn-icon btn-delete-attr" title="Supprimer" aria-label="Supprimer l’attribut">×</button>
             </div>
             <div class="attribute-editor-body">
                 <div class="attr-row">
@@ -108,7 +121,7 @@ export class ModalManager {
                 </div>
                 <div class="attr-row">
                     <label>DEFAULT:</label>
-                    <input type="text" class="attr-default" value="${attr.defaultValue || ''}" placeholder="Valeur par défaut" />
+                    <input type="text" class="attr-default" value="${escapeHTML(attr.defaultValue || '')}" placeholder="Valeur par défaut" />
                 </div>
                 <div class="attr-enum-section" style="display: ${attr.type === 'ENUM' || attr.type === 'SET' ? 'block' : 'none'};">
                     <label>Valeurs (ENUM/SET):</label>
@@ -147,7 +160,7 @@ export class ModalManager {
 
         const renderEnumTags = () => {
             enumTags.innerHTML = attr.enumValues.map((val, i) =>
-                `<span class="enum-tag">${val} <button class="enum-tag-remove" data-index="${i}">×</button></span>`
+                `<span class="enum-tag">${escapeHTML(val)} <button type="button" class="enum-tag-remove" aria-label="Supprimer ${escapeHTML(val)}" data-index="${i}">×</button></span>`
             ).join('');
 
             enumTags.querySelectorAll('.enum-tag-remove').forEach(btn => {
@@ -160,7 +173,7 @@ export class ModalManager {
 
         renderEnumTags();
 
-        enumInput.onkeypress = (e) => {
+        enumInput.onkeydown = (e) => {
             if (e.key === 'Enter' && enumInput.value.trim()) {
                 attr.enumValues.push(enumInput.value.trim());
                 enumInput.value = '';
@@ -215,9 +228,10 @@ export class ModalManager {
 
         const modal = document.getElementById('association-modal');
         modal.classList.add('active');
+        modal.setAttribute('aria-hidden', 'false');
 
         const originalAssoc = Association.fromJSON(assoc.toJSON());
-        const originalConnections = this.state.getConnectionsForAssociation(assocId).map(c => ({ ...c }));
+        const originalConnections = this.state.getConnectionsForAssociation(assocId).map(c => Connection.fromJSON(c.toJSON()));
 
         this.renderAssociationModalContent(assoc);
 
@@ -226,6 +240,7 @@ export class ModalManager {
             this.state.connections = this.state.connections.filter(c => c.associationId !== assocId);
             originalConnections.forEach(c => this.state.connections.push(c));
             modal.classList.remove('active');
+            modal.setAttribute('aria-hidden', 'true');
             this.renderer.render();
         };
 
@@ -235,11 +250,22 @@ export class ModalManager {
                 return;
             }
 
-            this.state.executeCommand(
-                new UpdateAssociationCommand(this.state, assoc.id, originalAssoc, Association.fromJSON(assoc.toJSON()))
-            );
+            if (assoc.attributes.some(attribute => !attribute.name.trim())) {
+                alert('Chaque attribut doit avoir un nom.');
+                return;
+            }
+            const newConnections = this.state.getConnectionsForAssociation(assocId).map(c => Connection.fromJSON(c.toJSON()));
+            this.state.executeCommand(new UpdateAssociationCommand(
+                this.state,
+                assoc.id,
+                originalAssoc,
+                Association.fromJSON(assoc.toJSON()),
+                originalConnections,
+                newConnections
+            ));
 
             modal.classList.remove('active');
+            modal.setAttribute('aria-hidden', 'true');
             this.renderer.render();
             if (window.app) window.app.updatePropertiesPanel();
         };
@@ -248,10 +274,13 @@ export class ModalManager {
             if (confirm('Supprimer cette association et toutes ses connexions?')) {
                 this.state.executeCommand(new DeleteAssociationCommand(this.state, assoc));
                 modal.classList.remove('active');
+                modal.setAttribute('aria-hidden', 'true');
                 this.renderer.render();
                 if (window.app) window.app.updatePropertiesPanel();
             }
         };
+
+        requestAnimationFrame(() => document.getElementById('assoc-modal-name').focus());
     }
 
     renderAssociationModalContent(assoc) {
@@ -267,14 +296,14 @@ export class ModalManager {
             const entity = this.state.getEntity(conn.entityId);
             return `
                 <div class="connection-item">
-                    <strong>${entity?.name || 'Entité inconnue'}</strong>
-                    <select class="conn-card-select" data-conn-id="${conn.id}">
+                    <strong>${escapeHTML(entity?.name || 'Entité inconnue')}</strong>
+                    <select class="conn-card-select" aria-label="Cardinalité avec ${escapeHTML(entity?.name || 'entité inconnue')}" data-conn-id="${escapeHTML(conn.id)}">
                         ${CONFIG.CARDINALITY_OPTIONS.map(c =>
                             `<option value="${c.value}" ${c.value === conn.cardinality ? 'selected' : ''}>${c.label}</option>`
                         ).join('')}
                     </select>
-                    <input type="text" class="conn-label-input" data-conn-id="${conn.id}" value="${conn.label || ''}" placeholder="Étiquette" />
-                    <button class="btn-icon btn-delete-conn" data-conn-id="${conn.id}">🗑</button>
+                    <input type="text" class="conn-label-input" aria-label="Rôle de la connexion" data-conn-id="${escapeHTML(conn.id)}" value="${escapeHTML(conn.label || '')}" placeholder="Rôle métier" />
+                    <button type="button" class="btn-icon btn-delete-conn" aria-label="Supprimer la connexion" data-conn-id="${escapeHTML(conn.id)}">×</button>
                 </div>
             `;
         }).join('');

@@ -29,14 +29,41 @@ export class Attribute {
         attr.enumValues = [...this.enumValues];
         return attr;
     }
+
+    toJSON() {
+        return {
+            id: this.id,
+            name: this.name,
+            type: this.type,
+            isPK: this.isPK,
+            isUQ: this.isUQ,
+            isNull: this.isNull,
+            defaultValue: this.defaultValue,
+            enumValues: [...this.enumValues]
+        };
+    }
+
+    static fromJSON(json) {
+        const attr = new Attribute(
+            json.id,
+            json.name,
+            json.type,
+            Boolean(json.isPK),
+            Boolean(json.isUQ),
+            Boolean(json.isNull),
+            json.defaultValue || ''
+        );
+        attr.enumValues = Array.isArray(json.enumValues) ? [...json.enumValues] : [];
+        return attr;
+    }
 }
 
 export class Entity {
     constructor(id, name, x, y, attributes = []) {
         this.id = id || generateId('entity');
         this.name = name || 'Nouvelle Entité';
-        this.x = x || 100;
-        this.y = y || 100;
+        this.x = x ?? 100;
+        this.y = y ?? 100;
         this.type = 'entity';
         this.attributes = attributes.length ? attributes : [
             new Attribute(generateId('attr'), 'id', 'INTEGER', true, false, false, '')
@@ -60,25 +87,13 @@ export class Entity {
             x: this.x,
             y: this.y,
             type: this.type,
-            attributes: this.attributes.map(a => ({ ...a }))
+            attributes: this.attributes.map(a => a.toJSON())
         };
     }
 
     static fromJSON(json) {
         const entity = new Entity(json.id, json.name, json.x, json.y);
-        entity.attributes = json.attributes.map(a => {
-            const attr = new Attribute(
-                a.id,
-                a.name,
-                a.type,
-                a.isPK,
-                a.isUQ,
-                a.isNull,
-                a.defaultValue
-            );
-            attr.enumValues = a.enumValues || [];
-            return attr;
-        });
+        entity.attributes = (json.attributes || []).map(Attribute.fromJSON);
         return entity;
     }
 }
@@ -87,8 +102,8 @@ export class Association {
     constructor(id, name, x, y, attributes = []) {
         this.id = id || generateId('assoc');
         this.name = name || 'Association';
-        this.x = x || 100;
-        this.y = y || 100;
+        this.x = x ?? 100;
+        this.y = y ?? 100;
         this.type = 'association';
         this.attributes = attributes;
     }
@@ -110,25 +125,13 @@ export class Association {
             x: this.x,
             y: this.y,
             type: this.type,
-            attributes: this.attributes.map(a => ({ ...a }))
+            attributes: this.attributes.map(a => a.toJSON())
         };
     }
 
     static fromJSON(json) {
         const assoc = new Association(json.id, json.name, json.x, json.y);
-        assoc.attributes = (json.attributes || []).map(a => {
-            const attr = new Attribute(
-                a.id,
-                a.name,
-                a.type,
-                a.isPK,
-                a.isUQ,
-                a.isNull,
-                a.defaultValue
-            );
-            attr.enumValues = a.enumValues || [];
-            return attr;
-        });
+        assoc.attributes = (json.attributes || []).map(Attribute.fromJSON);
         return assoc;
     }
 }

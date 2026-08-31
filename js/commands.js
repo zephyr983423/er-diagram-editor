@@ -88,12 +88,14 @@ export class CreateAssociationCommand extends Command {
 }
 
 export class UpdateAssociationCommand extends Command {
-    constructor(state, associationId, oldData, newData) {
+    constructor(state, associationId, oldData, newData, oldConnections = null, newConnections = null) {
         super();
         this.state = state;
         this.associationId = associationId;
         this.oldData = oldData;
         this.newData = newData;
+        this.oldConnections = oldConnections;
+        this.newConnections = newConnections;
     }
 
     execute() {
@@ -101,12 +103,24 @@ export class UpdateAssociationCommand extends Command {
         if (assoc) {
             Object.assign(assoc, this.newData);
         }
+        if (this.newConnections) {
+            this.state.connections = [
+                ...this.state.connections.filter(c => c.associationId !== this.associationId),
+                ...this.newConnections
+            ];
+        }
     }
 
     undo() {
         const assoc = this.state.getAssociation(this.associationId);
         if (assoc) {
             Object.assign(assoc, this.oldData);
+        }
+        if (this.oldConnections) {
+            this.state.connections = [
+                ...this.state.connections.filter(c => c.associationId !== this.associationId),
+                ...this.oldConnections
+            ];
         }
     }
 }
@@ -191,5 +205,38 @@ export class MoveNodeCommand extends Command {
             node.x = this.oldPos.x;
             node.y = this.oldPos.y;
         }
+    }
+}
+
+export class DeleteSelectionCommand extends Command {
+    constructor(state, selectedItems) {
+        super();
+        this.state = state;
+        const entityIds = new Set(selectedItems.filter(item => item.type === 'entity').map(item => item.id));
+        const associationIds = new Set(selectedItems.filter(item => item.type === 'association').map(item => item.id));
+        const connectionIds = new Set(selectedItems.filter(item => item.type === 'connection').map(item => item.id));
+
+        this.entities = state.entities.filter(entity => entityIds.has(entity.id));
+        this.associations = state.associations.filter(association => associationIds.has(association.id));
+        this.connections = state.connections.filter(connection =>
+            connectionIds.has(connection.id) ||
+            entityIds.has(connection.entityId) ||
+            associationIds.has(connection.associationId)
+        );
+    }
+
+    execute() {
+        const entityIds = new Set(this.entities.map(entity => entity.id));
+        const associationIds = new Set(this.associations.map(association => association.id));
+        const connectionIds = new Set(this.connections.map(connection => connection.id));
+        this.state.entities = this.state.entities.filter(entity => !entityIds.has(entity.id));
+        this.state.associations = this.state.associations.filter(association => !associationIds.has(association.id));
+        this.state.connections = this.state.connections.filter(connection => !connectionIds.has(connection.id));
+    }
+
+    undo() {
+        this.state.entities.push(...this.entities);
+        this.state.associations.push(...this.associations);
+        this.state.connections.push(...this.connections);
     }
 }

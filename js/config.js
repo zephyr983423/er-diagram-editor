@@ -4,11 +4,11 @@
 
 export const CONFIG = {
     GRID_SIZE: 20,
-    ENTITY_WIDTH: 220,
+    ENTITY_WIDTH: 240,
     ENTITY_MIN_HEIGHT: 100,
     ENTITY_PADDING: 12,
     ATTRIBUTE_HEIGHT: 28,
-    ASSOCIATION_MIN_WIDTH: 160,
+    ASSOCIATION_MIN_WIDTH: 180,
     ASSOCIATION_MIN_HEIGHT: 100,
     ASSOCIATION_PADDING: 12,
     ASSOCIATION_ATTRIBUTE_HEIGHT: 24,
@@ -21,18 +21,18 @@ export const CONFIG = {
     LABEL_OFFSET: 15,        // Offset for connection labels
     COLORS: {
         entity: '#ffffff',
-        entityStroke: '#2563eb',
-        entityStrokeSelected: '#dc2626',
-        entityHeader: '#2563eb',
+        entityStroke: '#3975d7',
+        entityStrokeSelected: '#e08b3f',
+        entityHeader: '#285fae',
         entityHeaderText: '#ffffff',
-        association: '#d1fae5',
-        associationStroke: '#10b981',
-        associationStrokeSelected: '#dc2626',
-        associationText: '#065f46',
-        connection: '#64748b',
-        connectionSelected: '#dc2626',
-        grid: '#e2e8f0',
-        background: '#f8fafc'
+        association: '#e2f8f1',
+        associationStroke: '#25a98c',
+        associationStrokeSelected: '#e08b3f',
+        associationText: '#126c5a',
+        connection: '#78889b',
+        connectionSelected: '#e08b3f',
+        grid: '#dfe6eb',
+        background: '#f4f7f9'
     },
     SQL_TYPES: [
         'INTEGER', 'BIGINT', 'SMALLINT', 'TINYINT',

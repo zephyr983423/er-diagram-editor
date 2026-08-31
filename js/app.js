@@ -1,7 +1,3 @@
-// ===========================
-// MAIN APPLICATION CONTROLLER
-// ===========================
-
 import { CONFIG } from './config.js';
 import { generateId } from './utils.js';
 import { Entity, Association, Connection } from './models.js';
@@ -9,516 +5,491 @@ import {
     CreateEntityCommand,
     CreateAssociationCommand,
     CreateConnectionCommand,
-    MoveNodeCommand,
     DeleteEntityCommand,
     DeleteAssociationCommand,
-    DeleteConnectionCommand
+    DeleteConnectionCommand,
+    DeleteSelectionCommand
 } from './commands.js';
 import { DiagramState } from './state.js';
 import { CanvasRenderer } from './renderer.js';
 import { ModalManager } from './modals.js';
+import { EXAMPLE_DIAGRAM } from './example.js';
 
-// Make commands globally available for state.js
 window.ERDiagramCommands = {
     CreateEntityCommand,
     CreateAssociationCommand,
     CreateConnectionCommand,
     DeleteEntityCommand,
     DeleteAssociationCommand,
-    DeleteConnectionCommand
+    DeleteConnectionCommand,
+    DeleteSelectionCommand
+};
+
+const TOOL_HINTS = {
+    select: 'Sélectionnez puis déplacez un élément, ou double-cliquez pour l’éditer.',
+    entity: 'Cliquez sur le canevas pour placer une nouvelle entité.',
+    association: 'Cliquez sur le canevas pour placer une nouvelle association.',
+    connection: 'Cliquez d’abord sur une association, puis sur l’entité à relier.'
 };
 
 export class ERDiagramApp {
     constructor() {
-        console.log('🚀 Initialisation de l\'application...');
-
         this.state = new DiagramState();
-        console.log('✓ DiagramState créé');
-
         this.currentTool = 'select';
         this.tempConnection = null;
-        this.dragStartPos = null;
-        this.lastClickTime = 0;
+        this.toastTimer = null;
 
         this.renderer = new CanvasRenderer('canvas-container', this.state);
-        console.log('✓ CanvasRenderer créé');
-
         this.stage = this.renderer.stage;
         this.modalManager = new ModalManager(this.state, this.renderer);
-        console.log('✓ ModalManager créé');
-
-        this.setupEventHandlers();
-        console.log('✓ Event handlers configurés');
-
-        this.setupKeyboardShortcuts();
-        console.log('✓ Raccourcis clavier configurés');
-
-        this.loadDiagram();
-        console.log('✓ Diagramme chargé');
-
-        // Make app globally available
         window.app = this;
 
-        console.log('✅ Application prête ! Grille visible, outils disponibles.');
-        console.log('→ Cliquez sur "Entité" puis sur le canvas pour créer une entité');
+        this.state.subscribe(reason => this.updateUI(reason));
+        this.setupEventHandlers();
+        this.setupKeyboardShortcuts();
+        this.loadDiagram();
+        this.updateUI('ready');
+
+        requestAnimationFrame(() => this.renderer.fitToContent());
     }
 
     setupEventHandlers() {
-        // Toolbar buttons
-        document.getElementById('tool-select').onclick = () => this.setTool('select');
-        document.getElementById('tool-entity').onclick = () => this.setTool('entity');
-        document.getElementById('tool-association').onclick = () => this.setTool('association');
-        document.getElementById('tool-connection').onclick = () => this.setTool('connection');
-
-        document.getElementById('btn-undo').onclick = () => this.undo();
-        document.getElementById('btn-redo').onclick = () => this.redo();
-        document.getElementById('btn-delete').onclick = () => this.deleteSelected();
-        document.getElementById('btn-grid').onclick = () => this.toggleGrid();
-        document.getElementById('btn-snap').onclick = () => this.toggleSnap();
-        document.getElementById('btn-export').onclick = () => this.openExportModal();
-        document.getElementById('btn-import').onclick = () => this.openImportModal();
-        document.getElementById('btn-clear').onclick = () => this.clearDiagram();
-        document.getElementById('btn-help').onclick = () => this.openHelpModal();
-
-        // Canvas interactions
-        this.stage.on('click', (e) => this.handleStageClick(e));
-        this.stage.on('contextmenu', (e) => this.handleContextMenu(e));
-
-        // Modal handlers
-        this.setupModalHandlers();
-    }
-
-    setupModalHandlers() {
-        // Entity modal
-        document.getElementById('entity-modal-close').onclick = () => {
-            document.getElementById('entity-modal').classList.remove('active');
-        };
-
-        // Association modal
-        document.getElementById('assoc-modal-close').onclick = () => {
-            document.getElementById('association-modal').classList.remove('active');
-        };
-
-        // Export modal
-        document.getElementById('export-modal-close').onclick = () => {
-            document.getElementById('export-modal').classList.remove('active');
-        };
-        document.getElementById('export-download').onclick = () => this.downloadJSON();
-        document.getElementById('export-copy').onclick = () => this.copyToClipboard();
-
-        // Import modal
-        document.getElementById('import-modal-close').onclick = () => {
-            document.getElementById('import-modal').classList.remove('active');
-        };
-        document.getElementById('import-modal-cancel').onclick = () => {
-            document.getElementById('import-modal').classList.remove('active');
-        };
-        document.getElementById('import-file').onchange = (e) => this.handleFileImport(e);
-        document.getElementById('import-confirm').onclick = () => this.importFromText();
-
-        // Help modal
-        document.getElementById('help-modal-close').onclick = () => {
-            document.getElementById('help-modal').classList.remove('active');
-        };
-        document.getElementById('help-modal-confirm').onclick = () => {
-            document.getElementById('help-modal').classList.remove('active');
-        };
-
-        // GLOBAL: All buttons with class "modal-close" close their parent modal
-        document.querySelectorAll('.modal-close').forEach(btn => {
-            btn.onclick = () => {
-                // Find parent modal overlay
-                let modal = btn.closest('.modal-overlay');
-                if (modal) {
-                    modal.classList.remove('active');
-                }
-            };
+        document.querySelectorAll('.tool-btn').forEach(button => {
+            button.addEventListener('click', () => this.setTool(button.dataset.tool));
         });
 
-        // Close modals on overlay click
+        document.getElementById('btn-undo').addEventListener('click', () => this.undo());
+        document.getElementById('btn-redo').addEventListener('click', () => this.redo());
+        document.getElementById('btn-delete').addEventListener('click', () => this.deleteSelected());
+        document.getElementById('btn-grid').addEventListener('click', () => this.toggleGrid());
+        document.getElementById('btn-snap').addEventListener('click', () => this.toggleSnap());
+        document.getElementById('btn-export').addEventListener('click', () => this.openExportModal());
+        document.getElementById('btn-import').addEventListener('click', () => this.openImportModal());
+        document.getElementById('btn-export-png').addEventListener('click', () => this.downloadPNG());
+        document.getElementById('btn-example').addEventListener('click', () => this.loadExample());
+        document.getElementById('btn-clear').addEventListener('click', () => this.clearDiagram());
+        document.getElementById('btn-help').addEventListener('click', () => this.openModal('help-modal'));
+        document.getElementById('btn-zoom-in').addEventListener('click', () => this.renderer.zoomIn());
+        document.getElementById('btn-zoom-out').addEventListener('click', () => this.renderer.zoomOut());
+        document.getElementById('zoom-level').addEventListener('click', () => this.renderer.resetZoom());
+        document.getElementById('btn-fit').addEventListener('click', () => this.renderer.fitToContent());
+
+        this.stage.on('click', event => this.handleStageClick(event));
+        this.stage.on('contextmenu', event => this.handleContextMenu(event));
+
+        document.getElementById('entity-modal-close').addEventListener('click', () => document.getElementById('entity-modal-cancel').click());
+        document.getElementById('assoc-modal-close').addEventListener('click', () => document.getElementById('assoc-modal-cancel').click());
+        document.getElementById('export-modal-close').addEventListener('click', () => this.closeModal('export-modal'));
+        document.getElementById('import-modal-close').addEventListener('click', () => this.closeModal('import-modal'));
+        document.getElementById('import-modal-cancel').addEventListener('click', () => this.closeModal('import-modal'));
+        document.getElementById('help-modal-close').addEventListener('click', () => this.closeModal('help-modal'));
+        document.getElementById('help-modal-confirm').addEventListener('click', () => this.closeModal('help-modal'));
+        document.getElementById('export-download').addEventListener('click', () => this.downloadJSON());
+        document.getElementById('export-copy').addEventListener('click', () => this.copyToClipboard());
+        document.getElementById('import-file').addEventListener('change', event => this.handleFileImport(event));
+        document.getElementById('import-confirm').addEventListener('click', () => this.importFromText());
+
         document.querySelectorAll('.modal-overlay').forEach(overlay => {
-            overlay.onclick = (e) => {
-                if (e.target === overlay) {
-                    overlay.classList.remove('active');
-                }
-            };
+            overlay.addEventListener('mousedown', event => {
+                if (event.target === overlay) this.closeActiveModal();
+            });
         });
 
-        // Context menu
-        document.getElementById('ctx-edit').onclick = (e) => {
-            e.stopPropagation();
-            this.editSelected();
-            document.getElementById('context-menu').style.display = 'none';
-        };
-        document.getElementById('ctx-delete').onclick = (e) => {
-            e.stopPropagation();
-            this.deleteSelected();
-            document.getElementById('context-menu').style.display = 'none';
-        };
-        document.getElementById('ctx-copy').onclick = (e) => {
-            e.stopPropagation();
-            this.copySelected();
-            document.getElementById('context-menu').style.display = 'none';
-        };
-        document.getElementById('ctx-paste').onclick = (e) => {
-            e.stopPropagation();
-            this.pasteSelected();
-            document.getElementById('context-menu').style.display = 'none';
-        };
-
-        // Close menu when clicking outside
-        document.addEventListener('click', (e) => {
+        document.getElementById('ctx-edit').addEventListener('click', () => this.runContextAction(() => this.editSelected()));
+        document.getElementById('ctx-delete').addEventListener('click', () => this.runContextAction(() => this.deleteSelected()));
+        document.getElementById('ctx-copy').addEventListener('click', () => this.runContextAction(() => this.copySelected()));
+        document.getElementById('ctx-paste').addEventListener('click', () => this.runContextAction(() => this.pasteSelected()));
+        document.addEventListener('click', event => {
             const menu = document.getElementById('context-menu');
-            if (menu && !menu.contains(e.target)) {
-                menu.style.display = 'none';
-            }
+            if (!menu.contains(event.target)) this.hideContextMenu();
         });
     }
 
     setupKeyboardShortcuts() {
-        document.addEventListener('keydown', (e) => {
-            // Ignore if typing in input/textarea
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-                return;
-            }
+        document.addEventListener('keydown', event => {
+            const isFormField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target?.tagName);
+            if (isFormField) return;
 
-            // Undo/Redo
-            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-                e.preventDefault();
+            const modifier = event.ctrlKey || event.metaKey;
+            const key = event.key.toLowerCase();
+
+            if (modifier && key === 'z' && !event.shiftKey) {
+                event.preventDefault();
                 this.undo();
-            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
-                e.preventDefault();
+            } else if (modifier && (key === 'y' || (key === 'z' && event.shiftKey))) {
+                event.preventDefault();
                 this.redo();
-            }
-
-            // Copy/Paste
-            else if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
-                e.preventDefault();
+            } else if (modifier && key === 'c') {
+                event.preventDefault();
                 this.copySelected();
-            } else if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
-                e.preventDefault();
+            } else if (modifier && key === 'v') {
+                event.preventDefault();
                 this.pasteSelected();
-            }
-
-            // Delete
-            else if (e.key === 'Delete' || e.key === 'Backspace') {
-                e.preventDefault();
-                this.deleteSelected();
-            }
-
-            // Select All
-            else if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-                e.preventDefault();
+            } else if (modifier && key === 'a') {
+                event.preventDefault();
                 this.selectAll();
-            }
-
-            // Escape to cancel tool
-            else if (e.key === 'Escape') {
-                this.setTool('select');
-                this.tempConnection = null;
-                this.renderer.render();
+            } else if (event.key === 'Delete' || event.key === 'Backspace') {
+                event.preventDefault();
+                this.deleteSelected();
+            } else if (event.key === 'Enter') {
+                this.editSelected();
+            } else if (event.key === 'Escape') {
+                if (document.querySelector('.modal-overlay.active')) this.closeActiveModal();
+                else {
+                    this.setTool('select');
+                    this.state.clearSelection();
+                    this.renderer.updateSelection();
+                }
+            } else if (['v', 'e', 'a', 'c'].includes(key) && !modifier) {
+                const tool = { v: 'select', e: 'entity', a: 'association', c: 'connection' }[key];
+                this.setTool(tool);
+            } else if (key === '0' && !modifier) {
+                this.renderer.fitToContent();
             }
         });
     }
 
     setTool(tool) {
+        if (!TOOL_HINTS[tool]) return;
         this.currentTool = tool;
         this.tempConnection = null;
-
-        document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
-        document.getElementById('tool-' + tool)?.classList.add('active');
-
+        document.querySelectorAll('.tool-btn').forEach(button => {
+            const active = button.dataset.tool === tool;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', String(active));
+        });
         this.stage.container().style.cursor = tool === 'select' ? 'default' : 'crosshair';
-        this.updatePropertiesPanel();
+        document.getElementById('tool-hint').textContent = TOOL_HINTS[tool];
     }
 
-    handleStageClick(e) {
-        const target = e.target;
+    handleStageClick(event) {
+        if (this.renderer.isPanning) return;
+        const target = event.target;
+        const isBackgroundClick = target === this.stage || target.getType() === 'Stage' || target.getParent()?.getType() === 'Layer';
 
-        // Check if clicking on stage background (not on a shape)
-        const isBackgroundClick = target === this.stage ||
-                                  target.getType() === 'Stage' ||
-                                  target.getParent()?.getType() === 'Layer';
+        if (this.currentTool === 'connection') {
+            this.handleConnectionTool(event);
+            return;
+        }
+        if (!isBackgroundClick) return;
 
-        if (isBackgroundClick && this.currentTool !== 'connection') {
-            if (this.currentTool === 'select') {
-                this.state.clearSelection();
-                this.renderer.render();
-                this.updatePropertiesPanel();
-            } else if (this.currentTool === 'entity') {
-                const pos = this.getRelativePointerPosition();
-                const snappedPos = this.snapToGrid(pos);
-                const entity = new Entity(
-                    generateId('entity'),
-                    'Nouvelle Entité',
-                    snappedPos.x,
-                    snappedPos.y
-                );
-                this.state.executeCommand(new CreateEntityCommand(this.state, entity));
-                this.renderer.render();
-                this.setTool('select');
-                console.log('Entité créée:', entity);
-            } else if (this.currentTool === 'association') {
-                const pos = this.getRelativePointerPosition();
-                const snappedPos = this.snapToGrid(pos);
-                const association = new Association(
-                    generateId('assoc'),
-                    'Association',
-                    snappedPos.x,
-                    snappedPos.y
-                );
-                this.state.executeCommand(new CreateAssociationCommand(this.state, association));
-                this.renderer.render();
-                this.setTool('select');
-                console.log('Association créée:', association);
-            }
+        if (this.currentTool === 'select') {
+            this.state.clearSelection();
+            this.renderer.updateSelection();
+            return;
         }
 
-        // Handle connection tool (clicks on entities/associations)
-        if (this.currentTool === 'connection') {
-            this.handleConnectionTool(e);
+        const position = this.renderer.snapPosition(this.getRelativePointerPosition());
+        if (this.currentTool === 'entity') {
+            const entity = new Entity(generateId('entity'), 'Nouvelle entité', position.x, position.y);
+            this.state.executeCommand(new CreateEntityCommand(this.state, entity));
+            this.state.select({ type: 'entity', id: entity.id });
+            this.renderer.render();
+            this.setTool('select');
+            this.modalManager.openEntityModal(entity.id);
+        } else if (this.currentTool === 'association') {
+            const association = new Association(generateId('assoc'), 'Nouvelle association', position.x, position.y);
+            this.state.executeCommand(new CreateAssociationCommand(this.state, association));
+            this.state.select({ type: 'association', id: association.id });
+            this.renderer.render();
+            this.setTool('select');
+            this.modalManager.openAssociationModal(association.id);
         }
     }
 
     getRelativePointerPosition() {
-        const pos = this.stage.getPointerPosition();
-        const transform = this.stage.getAbsoluteTransform().copy().invert();
-        return transform.point(pos);
+        const pointer = this.stage.getPointerPosition();
+        return this.stage.getAbsoluteTransform().copy().invert().point(pointer);
     }
 
-    handleConnectionTool(e) {
-        const target = e.target;
+    handleConnectionTool(event) {
+        let group = event.target;
+        while (group && group.getType() !== 'Group') group = group.getParent();
+        if (!group?.attrs.itemType) return;
 
-        // Check if we clicked on a group (entity or association)
-        let clickedGroup = target;
-        while (clickedGroup && clickedGroup.getType() !== 'Group') {
-            clickedGroup = clickedGroup.getParent();
-        }
-
-        if (!clickedGroup || !clickedGroup.attrs.itemType) {
+        const itemId = group.attrs.itemId;
+        const itemType = group.attrs.itemType;
+        if (!this.tempConnection) {
+            if (itemType !== 'association') {
+                this.showToast('Commencez par sélectionner une association.');
+                return;
+            }
+            this.tempConnection = { associationId: itemId };
+            this.state.select({ type: 'association', id: itemId });
+            this.renderer.updateSelection();
+            document.getElementById('tool-hint').textContent = 'Association choisie — cliquez maintenant sur une entité.';
             return;
         }
 
-        const itemId = clickedGroup.attrs.itemId;
-        const itemType = clickedGroup.attrs.itemType;
-
-        if (!this.tempConnection) {
-            // First click - must be on association
-            if (itemType === 'association') {
-                this.tempConnection = {
-                    associationId: itemId,
-                    association: this.state.getAssociation(itemId)
-                };
-                // Visual feedback
-                console.log('Association sélectionnée, cliquez sur une entité');
-            }
-        } else {
-            // Second click - must be on entity
-            if (itemType === 'entity') {
-                const connection = new Connection(
-                    generateId('conn'),
-                    this.tempConnection.associationId,
-                    itemId,
-                    '1,n',
-                    ''
-                );
-                this.state.executeCommand(new CreateConnectionCommand(this.state, connection));
-                this.tempConnection = null;
-                this.renderer.render();
-                this.setTool('select');
-                console.log('Connexion créée');
-            } else {
-                console.log('Veuillez cliquer sur une entité');
-            }
-        }
-    }
-
-    handleContextMenu(e) {
-        e.evt.preventDefault();
-
-        const target = e.target;
-
-        // Check if we clicked on a group (entity or association)
-        let clickedGroup = target;
-        while (clickedGroup && clickedGroup.getType() !== 'Group') {
-            clickedGroup = clickedGroup.getParent();
+        if (itemType !== 'entity') {
+            this.showToast('Choisissez une entité pour terminer la connexion.');
+            return;
         }
 
-        if (clickedGroup && clickedGroup.attrs.itemType) {
-            const itemId = clickedGroup.attrs.itemId;
-            const itemType = clickedGroup.attrs.itemType;
-            const item = itemType === 'entity'
-                ? this.state.getEntity(itemId)
-                : this.state.getAssociation(itemId);
-
-            if (item && !this.state.selectedItems.find(i => i.id === item.id)) {
-                this.state.select(item, false);
-                this.renderer.render();
-                this.updatePropertiesPanel();
-            }
-
-            const menu = document.getElementById('context-menu');
-            menu.style.display = 'block';
-            menu.style.left = e.evt.clientX + 'px';
-            menu.style.top = e.evt.clientY + 'px';
+        const duplicateCount = this.state.connections.filter(connection =>
+            connection.associationId === this.tempConnection.associationId && connection.entityId === itemId
+        ).length;
+        if (duplicateCount >= 2) {
+            this.showToast('Deux rôles relient déjà cette association à l’entité.');
+            return;
         }
+
+        const connection = new Connection(generateId('conn'), this.tempConnection.associationId, itemId, '1,n', '');
+        this.state.executeCommand(new CreateConnectionCommand(this.state, connection));
+        this.state.select({ type: 'connection', id: connection.id });
+        this.tempConnection = null;
+        this.renderer.render();
+        this.setTool('select');
+        this.showToast('Connexion ajoutée. Ouvrez l’association pour préciser la cardinalité.');
     }
 
-    snapToGrid(pos) {
-        return {
-            x: Math.round(pos.x / CONFIG.GRID_SIZE) * CONFIG.GRID_SIZE,
-            y: Math.round(pos.y / CONFIG.GRID_SIZE) * CONFIG.GRID_SIZE
-        };
+    handleContextMenu(event) {
+        event.evt.preventDefault();
+        let group = event.target;
+        while (group && group.getType() !== 'Group') group = group.getParent();
+        if (!group?.attrs.itemType) {
+            this.hideContextMenu();
+            return;
+        }
+        this.showContextMenu(event.evt.clientX, event.evt.clientY, group.attrs.itemId, group.attrs.itemType);
     }
 
-    // Command operations
+    showContextMenu(x, y, itemId, itemType) {
+        if (!this.state.selectedItems.some(item => item.id === itemId)) {
+            this.state.select({ type: itemType, id: itemId });
+            this.renderer.updateSelection();
+        }
+        const menu = document.getElementById('context-menu');
+        menu.style.display = 'block';
+        menu.setAttribute('aria-hidden', 'false');
+        const width = 190;
+        const height = 150;
+        menu.style.left = `${Math.min(x, window.innerWidth - width - 8)}px`;
+        menu.style.top = `${Math.min(y, window.innerHeight - height - 8)}px`;
+    }
+
+    hideContextMenu() {
+        const menu = document.getElementById('context-menu');
+        menu.style.display = 'none';
+        menu.setAttribute('aria-hidden', 'true');
+    }
+
+    runContextAction(action) {
+        this.hideContextMenu();
+        action();
+    }
+
     undo() {
         if (this.state.undo()) {
             this.renderer.render();
-            this.updatePropertiesPanel();
+            this.showToast('Dernière action annulée.');
         }
     }
 
     redo() {
         if (this.state.redo()) {
             this.renderer.render();
-            this.updatePropertiesPanel();
+            this.showToast('Action rétablie.');
         }
     }
 
     deleteSelected() {
-        if (this.state.selectedItems.length > 0) {
-            if (confirm('Supprimer les éléments sélectionnés?')) {
-                this.state.deleteSelected();
-                this.renderer.render();
-                this.updatePropertiesPanel();
-            }
+        if (!this.state.selectedItems.length) return;
+        if (confirm('Supprimer la sélection et ses connexions ?') && this.state.deleteSelected()) {
+            this.renderer.render();
+            this.showToast('Sélection supprimée.');
         }
     }
 
     copySelected() {
-        this.state.copy();
+        if (this.state.copy()) this.showToast('Sélection copiée.');
     }
 
     pasteSelected() {
         if (this.state.paste()) {
             this.renderer.render();
-            this.updatePropertiesPanel();
+            this.showToast('Copie ajoutée au modèle.');
         }
     }
 
     selectAll() {
-        this.state.entities.forEach(e => this.state.select(e, true));
-        this.state.associations.forEach(a => this.state.select(a, true));
-        this.renderer.render();
-        this.updatePropertiesPanel();
+        this.state.selectedItems = [
+            ...this.state.entities.map(entity => ({ type: 'entity', id: entity.id })),
+            ...this.state.associations.map(association => ({ type: 'association', id: association.id }))
+        ];
+        this.state.notify('selection');
+        this.renderer.updateSelection();
     }
 
     editSelected() {
-        if (this.state.selectedItems.length === 1) {
-            const item = this.state.selectedItems[0];
-            if (item.type === 'entity') {
-                this.modalManager.openEntityModal(item.id);
-            } else if (item.type === 'association') {
-                this.modalManager.openAssociationModal(item.id);
-            }
-        }
+        if (this.state.selectedItems.length !== 1) return;
+        const item = this.state.selectedItems[0];
+        if (item.type === 'entity') this.modalManager.openEntityModal(item.id);
+        else if (item.type === 'association') this.modalManager.openAssociationModal(item.id);
     }
 
-    // Properties panel removed - keeping stub to prevent errors
-    updatePropertiesPanel() {}
+    updateUI(reason = 'change') {
+        document.getElementById('entity-count').textContent = this.state.entities.length;
+        document.getElementById('association-count').textContent = this.state.associations.length;
+        document.getElementById('connection-count').textContent = this.state.connections.length;
+        document.getElementById('btn-undo').disabled = this.state.historyIndex < 0;
+        document.getElementById('btn-redo').disabled = this.state.historyIndex >= this.state.commandHistory.length - 1;
+        document.getElementById('btn-delete').disabled = this.state.selectedItems.length === 0;
 
-    // Import/Export
-    openExportModal() {
-        const modal = document.getElementById('export-modal');
-        const textarea = document.getElementById('export-data');
-        textarea.value = this.state.serialize();
+        const status = document.getElementById('save-status');
+        if (reason === 'save-error') status.textContent = 'Sauvegarde indisponible';
+        else if (reason === 'save') status.textContent = `Enregistré à ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(new Date())}`;
+    }
+
+    updatePropertiesPanel() {
+        this.updateUI('change');
+    }
+
+    openModal(id) {
+        const modal = document.getElementById(id);
         modal.classList.add('active');
+        modal.setAttribute('aria-hidden', 'false');
+        requestAnimationFrame(() => modal.querySelector('button, input, textarea, select')?.focus());
+    }
+
+    closeModal(id) {
+        const modal = document.getElementById(id);
+        modal.classList.remove('active');
+        modal.setAttribute('aria-hidden', 'true');
+    }
+
+    closeActiveModal() {
+        const active = document.querySelector('.modal-overlay.active');
+        if (!active) return;
+        if (active.id === 'entity-modal') document.getElementById('entity-modal-cancel').click();
+        else if (active.id === 'association-modal') document.getElementById('assoc-modal-cancel').click();
+        else this.closeModal(active.id);
+    }
+
+    openExportModal() {
+        document.getElementById('export-data').value = this.state.serialize(true);
+        this.openModal('export-modal');
     }
 
     openImportModal() {
-        const modal = document.getElementById('import-modal');
         document.getElementById('import-data').value = '';
         document.getElementById('import-file').value = '';
-        modal.classList.add('active');
+        document.getElementById('import-error').textContent = '';
+        this.openModal('import-modal');
     }
 
     downloadJSON() {
-        const data = this.state.serialize();
-        const blob = new Blob([data], { type: 'application/json' });
+        this.downloadBlob(new Blob([this.state.serialize(true)], { type: 'application/json' }), 'atelier-merise.json');
+        this.showToast('Export JSON téléchargé.');
+    }
+
+    downloadPNG() {
+        const link = document.createElement('a');
+        link.href = this.renderer.exportPNG(2);
+        link.download = 'atelier-merise.png';
+        link.click();
+        this.showToast('Image PNG exportée.');
+    }
+
+    downloadBlob(blob, filename) {
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'er-diagram.json';
-        a.click();
-        URL.revokeObjectURL(url);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
-    copyToClipboard() {
-        const textarea = document.getElementById('export-data');
-        textarea.select();
-        document.execCommand('copy');
-        alert('Copié dans le presse-papiers!');
-    }
-
-    handleFileImport(e) {
-        const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = (evt) => {
-                document.getElementById('import-data').value = evt.target.result;
-            };
-            reader.readAsText(file);
+    async copyToClipboard() {
+        const value = document.getElementById('export-data').value;
+        try {
+            await navigator.clipboard.writeText(value);
+        } catch {
+            const textarea = document.getElementById('export-data');
+            textarea.select();
+            document.execCommand('copy');
         }
+        this.showToast('JSON copié dans le presse-papiers.');
+    }
+
+    handleFileImport(event) {
+        const file = event.target.files[0];
+        const error = document.getElementById('import-error');
+        error.textContent = '';
+        if (!file) return;
+        if (file.size > 2 * 1024 * 1024) {
+            error.textContent = 'Le fichier dépasse la limite de 2 Mo.';
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = loadEvent => { document.getElementById('import-data').value = String(loadEvent.target.result || ''); };
+        reader.onerror = () => { error.textContent = 'Impossible de lire ce fichier.'; };
+        reader.readAsText(file);
     }
 
     importFromText() {
-        const data = document.getElementById('import-data').value;
-        if (data.trim()) {
-            if (confirm('Remplacer le diagramme actuel?')) {
-                if (this.state.deserialize(data)) {
-                    document.getElementById('import-modal').classList.remove('active');
-                    this.renderer.render();
-                    this.updatePropertiesPanel();
-                } else {
-                    alert('Erreur lors de l\'importation. Vérifiez le format JSON.');
-                }
-            }
+        const data = document.getElementById('import-data').value.trim();
+        const error = document.getElementById('import-error');
+        error.textContent = '';
+        if (!data) {
+            error.textContent = 'Ajoutez un fichier ou collez un document JSON.';
+            return;
         }
+        if (!this.state.deserialize(data)) {
+            error.textContent = this.state.lastError || 'Le format JSON est invalide.';
+            return;
+        }
+        this.closeModal('import-modal');
+        this.renderer.render();
+        this.renderer.fitToContent();
+        this.showToast('Diagramme importé et sauvegardé localement.');
+    }
+
+    loadExample() {
+        const hasContent = this.state.entities.length || this.state.associations.length;
+        if (hasContent && !confirm('Remplacer le diagramme actuel par le modèle d’exemple ?')) return;
+        this.state.deserialize(EXAMPLE_DIAGRAM);
+        this.renderer.render();
+        this.renderer.fitToContent();
+        this.showToast('Modèle e-commerce chargé.');
     }
 
     clearDiagram() {
-        if (confirm('Effacer tout le diagramme? Cette action est irréversible.')) {
-            this.state.clear();
-            this.renderer.render();
-            this.updatePropertiesPanel();
-        }
+        const hasContent = this.state.entities.length || this.state.associations.length;
+        if (hasContent && !confirm('Créer un nouveau diagramme vide ? Le modèle actuel sera remplacé.')) return;
+        this.state.clear();
+        this.renderer.render();
+        this.renderer.fitToContent();
+        this.showToast('Nouveau diagramme prêt.');
     }
 
     toggleGrid() {
         this.renderer.toggleGrid();
-        const btn = document.getElementById('btn-grid');
-        btn.classList.toggle('active');
+        const button = document.getElementById('btn-grid');
+        button.classList.toggle('active', this.renderer.showGrid);
+        button.setAttribute('aria-pressed', String(this.renderer.showGrid));
     }
 
     toggleSnap() {
         this.renderer.toggleSnap();
-        const btn = document.getElementById('btn-snap');
-        btn.classList.toggle('active');
-    }
-
-    openHelpModal() {
-        document.getElementById('help-modal').classList.add('active');
+        const button = document.getElementById('btn-snap');
+        button.classList.toggle('active', this.renderer.snapToGrid);
+        button.setAttribute('aria-pressed', String(this.renderer.snapToGrid));
     }
 
     loadDiagram() {
-        this.state.loadFromLocalStorage();
+        const forceExample = new URLSearchParams(window.location.search).get('demo') === '1';
+        if (forceExample || !this.state.loadFromLocalStorage()) this.state.deserialize(EXAMPLE_DIAGRAM);
         this.renderer.render();
-        this.updatePropertiesPanel();
+    }
+
+    showToast(message) {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.classList.add('visible');
+        window.clearTimeout(this.toastTimer);
+        this.toastTimer = window.setTimeout(() => toast.classList.remove('visible'), 2600);
     }
 }
 
-// Initialize application when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-    new ERDiagramApp();
-});
+document.addEventListener('DOMContentLoaded', () => new ERDiagramApp());

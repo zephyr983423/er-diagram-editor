@@ -3,7 +3,10 @@
 // ===========================
 
 export function generateId(prefix = 'id') {
-    return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const randomPart = globalThis.crypto?.randomUUID
+        ? globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 12)
+        : Math.random().toString(36).slice(2, 14);
+    return `${prefix}_${Date.now().toString(36)}_${randomPart}`;
 }
 
 export function formatAttribute(attr) {
@@ -11,7 +14,7 @@ export function formatAttribute(attr) {
 
     // Pour les attributs UQ (unique/clés étrangères)
     if (attr.isUQ && !attr.isPK) {
-        parts.push({ text: '[UQ]', style: 'normal' });
+        parts.push({ text: '[UQ] ', style: 'normal' });
         parts.push({ text: attr.name, style: 'normal' });
     }
     // Pour les clés primaires
@@ -30,7 +33,7 @@ export function formatAttribute(attr) {
 
     // NOT NULL seulement pour les attributs non-PK
     if (!attr.isNull && !attr.isPK) {
-        parts.push({ text: ' [NOT NULL]', style: 'constraint' });
+        parts.push({ text: ' · NN', style: 'constraint' });
     }
 
     return parts;

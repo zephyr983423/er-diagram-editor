@@ -2,6 +2,7 @@
 // CANVAS RENDERER
 // ===========================
 
+import Konva from 'konva';
 import { CONFIG } from './config.js';
 import { formatAttribute, formatAttributeSimple, calculateAngle, getPerpendicularOffset, snapToGrid } from './utils.js';
 import { MoveNodeCommand } from './commands.js';
@@ -24,10 +25,8 @@ export class CanvasRenderer {
             container: containerId,
             width: width,
             height: height,
-            draggable: false  // Stage dragging handled separately
+            draggable: false
         });
-
-        console.log(`Stage créé: ${width}x${height}`);
 
         this.gridLayer = new Konva.Layer();
         this.connectionLayer = new Konva.Layer();
@@ -51,6 +50,8 @@ export class CanvasRenderer {
         this.dragStartPos = null;
         this.dragNodeId = null;
         this.dragNodeType = null;
+        this.isSpacePressed = false;
+        this.isPanning = false;
 
         this.setupGrid();
         this.setupEvents();
@@ -128,11 +129,42 @@ export class CanvasRenderer {
             this.setZoom(newScale, mousePointTo, pointer);
         });
 
-        // Note: Stage click events are handled in app.js for tool management
+        document.addEventListener('keydown', event => {
+            const isFormField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target?.tagName);
+            if (event.code === 'Space' && !isFormField && !event.repeat) {
+                event.preventDefault();
+                this.isSpacePressed = true;
+                this.stage.draggable(true);
+                this.stage.container().style.cursor = 'grab';
+            }
+        });
+
+        document.addEventListener('keyup', event => {
+            if (event.code === 'Space') {
+                this.isSpacePressed = false;
+                this.stage.draggable(false);
+                this.isPanning = false;
+                this.stage.container().style.cursor = window.app?.currentTool === 'select' ? 'default' : 'crosshair';
+            }
+        });
+
+        this.stage.on('dragstart', event => {
+            if (event.target === this.stage) {
+                this.isPanning = true;
+                this.stage.container().style.cursor = 'grabbing';
+            }
+        });
+
+        this.stage.on('dragend', event => {
+            if (event.target === this.stage) {
+                window.setTimeout(() => { this.isPanning = false; }, 0);
+                this.stage.container().style.cursor = this.isSpacePressed ? 'grab' : 'default';
+            }
+        });
     }
 
     setZoom(scale, center, pointer) {
-        this.scale = scale;
+        this.scale = Number(scale.toFixed(3));
         this.stage.scale({ x: scale, y: scale });
 
         const newPos = {
@@ -143,7 +175,8 @@ export class CanvasRenderer {
         this.stage.position(newPos);
         this.stage.batchDraw();
 
-        document.getElementById('zoom-level').textContent = Math.round(scale * 100) + '%';
+        const zoomLabel = document.getElementById('zoom-level');
+        if (zoomLabel) zoomLabel.textContent = Math.round(scale * 100) + ' %';
     }
 
     zoomIn() {
@@ -177,9 +210,65 @@ export class CanvasRenderer {
     }
 
     resetZoom() {
-        this.setZoom(1, { x: 0, y: 0 }, { x: 0, y: 0 });
-        this.stage.position({ x: 0, y: 0 });
+        const center = { x: this.stage.width() / 2, y: this.stage.height() / 2 };
+        this.setZoom(1, {
+            x: (center.x - this.stage.x()) / this.scale,
+            y: (center.y - this.stage.y()) / this.scale
+        }, center);
+    }
+
+    fitToContent(padding = 55) {
+        const bounds = [];
+        this.state.entities.forEach(entity => bounds.push({
+            left: entity.x,
+            top: entity.y,
+            right: entity.x + CONFIG.ENTITY_WIDTH,
+            bottom: entity.y + CONFIG.ENTITY_MIN_HEIGHT + entity.attributes.length * CONFIG.ATTRIBUTE_HEIGHT
+        }));
+        this.state.associations.forEach(association => {
+            const shape = this.associationShapes.get(association.id);
+            const width = shape?.width || CONFIG.ASSOCIATION_MIN_WIDTH;
+            const height = shape?.height || CONFIG.ASSOCIATION_MIN_HEIGHT;
+            bounds.push({
+                left: association.x - width / 2,
+                top: association.y - height / 2,
+                right: association.x + width / 2,
+                bottom: association.y + height / 2
+            });
+        });
+
+        if (!bounds.length) {
+            this.stage.scale({ x: 1, y: 1 });
+            this.stage.position({ x: 0, y: 0 });
+            this.scale = 1;
+        } else {
+            const left = Math.min(...bounds.map(bound => bound.left));
+            const top = Math.min(...bounds.map(bound => bound.top));
+            const right = Math.max(...bounds.map(bound => bound.right));
+            const bottom = Math.max(...bounds.map(bound => bound.bottom));
+            const contentWidth = Math.max(1, right - left);
+            const contentHeight = Math.max(1, bottom - top);
+            const scale = Math.min(
+                CONFIG.ZOOM_MAX,
+                Math.max(CONFIG.ZOOM_MIN, Math.min(
+                    (this.stage.width() - padding * 2) / contentWidth,
+                    (this.stage.height() - padding * 2) / contentHeight
+                ))
+            );
+            this.scale = Number(scale.toFixed(3));
+            this.stage.scale({ x: this.scale, y: this.scale });
+            this.stage.position({
+                x: (this.stage.width() - contentWidth * this.scale) / 2 - left * this.scale,
+                y: (this.stage.height() - contentHeight * this.scale) / 2 - top * this.scale
+            });
+        }
+        const zoomLabel = document.getElementById('zoom-level');
+        if (zoomLabel) zoomLabel.textContent = Math.round(this.scale * 100) + ' %';
         this.stage.batchDraw();
+    }
+
+    exportPNG(pixelRatio = 2) {
+        return this.stage.toDataURL({ pixelRatio, mimeType: 'image/png' });
     }
 
     handleResize() {
@@ -189,8 +278,8 @@ export class CanvasRenderer {
     }
 
     render() {
-        this.renderConnections();
         this.renderNodes();
+        this.renderConnections();
         this.updateSelection();
     }
 
@@ -287,7 +376,7 @@ export class CanvasRenderer {
                     text: part.text,
                     x: xOffset,
                     y: yOffset,
-                    fontSize: 13,
+                    fontSize: 12,
                     fill: '#1e293b'
                 };
 
@@ -303,12 +392,12 @@ export class CanvasRenderer {
                 // Style pour les contraintes (NOT NULL)
                 else if (part.style === 'constraint') {
                     textConfig.fill = '#64748b';
-                    textConfig.fontSize = 11;
+                    textConfig.fontSize = 10;
                 }
 
                 const textNode = new Konva.Text(textConfig);
                 group.add(textNode);
-                xOffset += textNode.width();
+                xOffset += textNode.width() + 1;
             });
 
             yOffset += CONFIG.ATTRIBUTE_HEIGHT;
@@ -337,7 +426,6 @@ export class CanvasRenderer {
 
             if (timeSinceLastClick < DOUBLE_CLICK_DELAY) {
                 // Double-click detected!
-                console.log('Double-clic détecté sur entité:', entity.name);
                 if (window.app && window.app.modalManager) {
                     window.app.modalManager.openEntityModal(entity.id);
                 }
@@ -423,16 +511,12 @@ export class CanvasRenderer {
         );
         const width = CONFIG.ASSOCIATION_MIN_WIDTH;
 
-        // Rounded rectangle
-        const rect = new Konva.Rect({
-            x: -width / 2,
-            y: -totalHeight / 2,
-            width: width,
-            height: totalHeight,
+        const rect = new Konva.Ellipse({
+            radiusX: width / 2,
+            radiusY: totalHeight / 2,
             fill: CONFIG.COLORS.association,
             stroke: CONFIG.COLORS.associationStroke,
             strokeWidth: 2,
-            cornerRadius: 15,
             shadowColor: 'black',
             shadowBlur: 10,
             shadowOpacity: 0.1,
@@ -494,7 +578,6 @@ export class CanvasRenderer {
 
             if (timeSinceLastClick < DOUBLE_CLICK_DELAY) {
                 // Double-click detected!
-                console.log('Double-clic détecté sur association:', assoc.name);
                 if (window.app && window.app.modalManager) {
                     window.app.modalManager.openAssociationModal(assoc.id);
                 }
@@ -615,7 +698,8 @@ export class CanvasRenderer {
             points: [assocPoint.x, assocPoint.y, entityPoint.x, entityPoint.y],
             stroke: CONFIG.COLORS.connection,
             strokeWidth: 2,
-            lineCap: 'round'
+            lineCap: 'round',
+            hitStrokeWidth: 16
         });
 
         // Cardinality near entity with smart positioning
@@ -706,7 +790,8 @@ export class CanvasRenderer {
             strokeWidth: 2,
             lineCap: 'round',
             tension: 0.3,
-            bezier: true
+            bezier: true,
+            hitStrokeWidth: 16
         });
 
         // Calculate midpoint of bezier curve (t=0.5)
@@ -800,15 +885,11 @@ export class CanvasRenderer {
 
         const dx = targetX - assoc.x;
         const dy = targetY - assoc.y;
-
-        // Calculate intersection with rounded rectangle
-        const angle = Math.atan2(dy, dx);
-
-        // Approximate with ellipse for edge calculation
         const a = width / 2;
         const b = height / 2;
-        const x = assoc.x + a * Math.cos(angle);
-        const y = assoc.y + b * Math.sin(angle);
+        const divisor = Math.sqrt((dx * dx) / (a * a) + (dy * dy) / (b * b)) || 1;
+        const x = assoc.x + dx / divisor;
+        const y = assoc.y + dy / divisor;
 
         return { x, y };
     }
@@ -854,7 +935,7 @@ export class CanvasRenderer {
         });
 
         this.associationShapes.forEach(shape => {
-            const rect = shape.group.findOne('Rect');
+            const rect = shape.group.findOne('Ellipse');
             if (rect) {
                 rect.stroke(CONFIG.COLORS.associationStroke);
                 rect.strokeWidth(2);
@@ -875,7 +956,7 @@ export class CanvasRenderer {
             } else if (item.type === 'association') {
                 const shape = this.associationShapes.get(item.id);
                 if (shape) {
-                    const rect = shape.group.findOne('Rect');
+                    const rect = shape.group.findOne('Ellipse');
                     if (rect) {
                         rect.stroke(CONFIG.COLORS.associationStrokeSelected);
                         rect.strokeWidth(3);
