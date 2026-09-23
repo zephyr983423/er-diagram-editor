@@ -2,6 +2,59 @@
 // COMMAND PATTERN
 // ===========================
 
+import { Association, Connection, TextAnnotation, MAX_TEXT_NOTES } from './models.js';
+import { validCoordinate } from './viewport.js';
+import { applySize, validDimension } from './dimensions.js';
+
+export class ResizeNodeCommand {
+    constructor(state, id, type, previous, next) {
+        this.state = state; this.id = id; this.type = type;
+        this.previous = structuredClone(previous); this.next = structuredClone(next);
+    }
+    apply(data) {
+        const node = this.type === 'entity' ? this.state.getEntity(this.id) : this.type === 'association' ? this.state.getAssociation(this.id) : this.state.getText(this.id);
+        if (!node) return;
+        assertPosition(data);
+        for (const key of ['width', 'height']) if (data[key] !== undefined && !validDimension(data[key])) throw new Error('Dimension invalide.');
+        applySize(node, data);
+    }
+    execute() { this.apply(this.next); }
+    undo() { this.apply(this.previous); }
+}
+
+function assertPosition(position) {
+    if (!validCoordinate(position.x) || !validCoordinate(position.y)) throw new Error('Position hors de la plage numérique prise en charge.');
+}
+
+export class UpdateConnectionCommand {
+    constructor(state, id, previous, next) {
+        this.state = state; this.id = id;
+        this.previous = { cardinality: previous.cardinality, label: previous.label };
+        this.next = { cardinality: next.cardinality, label: next.label };
+    }
+    apply(data) { const connection = this.state.getConnection(this.id); if (connection) Object.assign(connection, data); }
+    execute() { this.apply(this.next); }
+    undo() { this.apply(this.previous); }
+}
+
+export class UpdateTextCommand {
+    constructor(state, id, previous, next) {
+        this.state = state; this.id = id; this.previous = structuredClone(previous); this.next = structuredClone(next);
+        this.index = state.texts.findIndex(text => text.id === id);
+    }
+    apply(data) {
+        const index = this.state.texts.findIndex(text => text.id === this.id);
+        if (!data) { if (index >= 0) this.state.texts.splice(index, 1); return; }
+        if (index < 0 && this.state.texts.length >= MAX_TEXT_NOTES) throw new Error(`Un diagramme peut contenir jusqu’à ${MAX_TEXT_NOTES} notes.`);
+        assertPosition(data);
+        const text = TextAnnotation.fromJSON(data);
+        if (index >= 0) this.state.texts.splice(index, 1, text);
+        else this.state.texts.splice(this.index < 0 ? this.state.texts.length : this.index, 0, text);
+    }
+    execute() { this.apply(this.next); }
+    undo() { this.apply(this.previous); }
+}
+
 export class Command {
     execute() {
         throw new Error('execute() must be implemented');
@@ -19,6 +72,7 @@ export class CreateEntityCommand extends Command {
     }
 
     execute() {
+        assertPosition(this.entity);
         this.state.entities.push(this.entity);
     }
 
@@ -79,6 +133,7 @@ export class CreateAssociationCommand extends Command {
     }
 
     execute() {
+        assertPosition(this.association);
         this.state.associations.push(this.association);
     }
 
@@ -92,35 +147,38 @@ export class UpdateAssociationCommand extends Command {
         super();
         this.state = state;
         this.associationId = associationId;
-        this.oldData = oldData;
-        this.newData = newData;
-        this.oldConnections = oldConnections;
-        this.newConnections = newConnections;
+        this.oldData = structuredClone(oldData);
+        this.newData = structuredClone(newData);
+        this.oldConnections = oldConnections && structuredClone(oldConnections);
+        this.newConnections = newConnections && structuredClone(newConnections);
+        this.connectionOrder = new Map(state.connections.map((connection, index) => [connection.id, index]));
+    }
+
+    restoreConnections(connections) {
+        this.state.connections = [
+            ...this.state.connections.filter(c => c.associationId !== this.associationId),
+            ...connections.map(Connection.fromJSON)
+        ].sort((left, right) => (this.connectionOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+            (this.connectionOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER));
     }
 
     execute() {
         const assoc = this.state.getAssociation(this.associationId);
         if (assoc) {
-            Object.assign(assoc, this.newData);
+            Object.assign(assoc, Association.fromJSON(this.newData));
         }
         if (this.newConnections) {
-            this.state.connections = [
-                ...this.state.connections.filter(c => c.associationId !== this.associationId),
-                ...this.newConnections
-            ];
+            this.restoreConnections(this.newConnections);
         }
     }
 
     undo() {
         const assoc = this.state.getAssociation(this.associationId);
         if (assoc) {
-            Object.assign(assoc, this.oldData);
+            Object.assign(assoc, Association.fromJSON(this.oldData));
         }
         if (this.oldConnections) {
-            this.state.connections = [
-                ...this.state.connections.filter(c => c.associationId !== this.associationId),
-                ...this.oldConnections
-            ];
+            this.restoreConnections(this.oldConnections);
         }
     }
 }
@@ -190,8 +248,9 @@ export class MoveNodeCommand extends Command {
     execute() {
         const node = this.nodeType === 'entity'
             ? this.state.getEntity(this.nodeId)
-            : this.state.getAssociation(this.nodeId);
+            : this.nodeType === 'text' ? this.state.getText(this.nodeId) : this.state.getAssociation(this.nodeId);
         if (node) {
+            assertPosition(this.newPos);
             node.x = this.newPos.x;
             node.y = this.newPos.y;
         }
@@ -200,10 +259,37 @@ export class MoveNodeCommand extends Command {
     undo() {
         const node = this.nodeType === 'entity'
             ? this.state.getEntity(this.nodeId)
-            : this.state.getAssociation(this.nodeId);
+            : this.nodeType === 'text' ? this.state.getText(this.nodeId) : this.state.getAssociation(this.nodeId);
         if (node) {
             node.x = this.oldPos.x;
             node.y = this.oldPos.y;
+        }
+    }
+}
+
+export class MoveMultipleNodesCommand extends Command {
+    constructor(state, moves) {
+        super();
+        this.state = state;
+        this.moves = moves; // Array of { id, type, oldPos, newPos }
+    }
+
+    getNode(move) {
+        return move.type === 'entity' ? this.state.getEntity(move.id) :
+            move.type === 'text' ? this.state.getText(move.id) : this.state.getAssociation(move.id);
+    }
+
+    execute() {
+        for (const move of this.moves) {
+            const node = this.getNode(move);
+            if (node) { node.x = move.newPos.x; node.y = move.newPos.y; }
+        }
+    }
+
+    undo() {
+        for (const move of this.moves) {
+            const node = this.getNode(move);
+            if (node) { node.x = move.oldPos.x; node.y = move.oldPos.y; }
         }
     }
 }
@@ -215,6 +301,8 @@ export class DeleteSelectionCommand extends Command {
         const entityIds = new Set(selectedItems.filter(item => item.type === 'entity').map(item => item.id));
         const associationIds = new Set(selectedItems.filter(item => item.type === 'association').map(item => item.id));
         const connectionIds = new Set(selectedItems.filter(item => item.type === 'connection').map(item => item.id));
+        const textIds = new Set(selectedItems.filter(item => item.type === 'text').map(item => item.id));
+        this.texts = state.texts.filter(text => textIds.has(text.id));
 
         this.entities = state.entities.filter(entity => entityIds.has(entity.id));
         this.associations = state.associations.filter(association => associationIds.has(association.id));
@@ -232,11 +320,14 @@ export class DeleteSelectionCommand extends Command {
         this.state.entities = this.state.entities.filter(entity => !entityIds.has(entity.id));
         this.state.associations = this.state.associations.filter(association => !associationIds.has(association.id));
         this.state.connections = this.state.connections.filter(connection => !connectionIds.has(connection.id));
+        const textIds = new Set(this.texts.map(text => text.id));
+        this.state.texts = this.state.texts.filter(text => !textIds.has(text.id));
     }
 
     undo() {
         this.state.entities.push(...this.entities);
         this.state.associations.push(...this.associations);
         this.state.connections.push(...this.connections);
+        this.state.texts.push(...this.texts);
     }
 }

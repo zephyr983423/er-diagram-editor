@@ -5,7 +5,9 @@
 import Konva from 'konva';
 import { CONFIG } from './config.js';
 import { formatAttribute, formatAttributeSimple, calculateAngle, getPerpendicularOffset, snapToGrid } from './utils.js';
-import { MoveNodeCommand } from './commands.js';
+import { MoveNodeCommand, MoveMultipleNodesCommand, ResizeNodeCommand } from './commands.js';
+import { sizeSnapshot, resizedRectangle, clearLabelPosition } from './dimensions.js';
+import { CanvasNavigation, MIN_ZOOM, MAX_ZOOM, visibleBounds, gridSpacing, imageDimensions, constrainPosition } from './viewport.js';
 
 export class CanvasRenderer {
     constructor(containerId, state) {
@@ -28,13 +30,15 @@ export class CanvasRenderer {
             draggable: false
         });
 
-        this.gridLayer = new Konva.Layer();
+        this.gridLayer = new Konva.Layer({ listening: false });
         this.connectionLayer = new Konva.Layer();
         this.nodeLayer = new Konva.Layer();
+        this.controlsLayer = new Konva.Layer();
 
         this.stage.add(this.gridLayer);
         this.stage.add(this.connectionLayer);
         this.stage.add(this.nodeLayer);
+        this.stage.add(this.controlsLayer);
 
         // Settings
         this.showGrid = true;
@@ -45,19 +49,17 @@ export class CanvasRenderer {
         this.entityShapes = new Map();
         this.associationShapes = new Map();
         this.connectionShapes = new Map();
+        this.textShapes = new Map();
 
         // Drag tracking
-        this.dragStartPos = null;
-        this.dragNodeId = null;
-        this.dragNodeType = null;
-        this.isSpacePressed = false;
         this.isPanning = false;
 
         this.setupGrid();
-        this.setupEvents();
+        this.navigation = new CanvasNavigation(this);
         this.render();
 
-        window.addEventListener('resize', () => this.handleResize());
+        this.resizeObserver = new ResizeObserver(() => this.handleResize());
+        this.resizeObserver.observe(this.container);
     }
 
     setupGrid() {
@@ -66,32 +68,45 @@ export class CanvasRenderer {
 
     drawGrid() {
         this.gridLayer.destroyChildren();
-
-        if (!this.showGrid) {
-            this.gridLayer.batchDraw();
-            return;
-        }
-
-        const width = CONFIG.CANVAS_WIDTH;
-        const height = CONFIG.CANVAS_HEIGHT;
-
-        for (let x = 0; x <= width; x += CONFIG.GRID_SIZE) {
-            this.gridLayer.add(new Konva.Line({
-                points: [x, 0, x, height],
-                stroke: CONFIG.COLORS.grid,
-                strokeWidth: 1
-            }));
-        }
-
-        for (let y = 0; y <= height; y += CONFIG.GRID_SIZE) {
-            this.gridLayer.add(new Konva.Line({
-                points: [0, y, width, y],
-                stroke: CONFIG.COLORS.grid,
-                strokeWidth: 1
-            }));
-        }
-
+        if (this.showGrid) this.gridLayer.add(this.makeGrid(this.getVisibleBounds(), this.scale));
         this.gridLayer.batchDraw();
+    }
+
+    makeGrid(bounds, scale) {
+        const step = gridSpacing(scale, CONFIG.GRID_SIZE);
+        return new Konva.Shape({ listening: false, sceneFunc(context) {
+            context.beginPath();
+            const left = Math.floor(bounds.x / step) * step;
+            const top = Math.floor(bounds.y / step) * step;
+            for (let x = left; x <= bounds.x + bounds.width + step; x += step) {
+                context.moveTo(x, bounds.y); context.lineTo(x, bounds.y + bounds.height);
+            }
+            for (let y = top; y <= bounds.y + bounds.height + step; y += step) {
+                context.moveTo(bounds.x, y); context.lineTo(bounds.x + bounds.width, y);
+            }
+            context.setAttr('strokeStyle', CONFIG.COLORS.grid);
+            context.setAttr('lineWidth', 1 / scale);
+            context.stroke();
+        } });
+    }
+
+    getVisibleBounds() {
+        return visibleBounds({ ...this.stage.position(), scale: this.scale, width: this.stage.width(), height: this.stage.height() });
+    }
+
+    setView(x, y, scale) {
+        scale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale));
+        const center = constrainPosition({ x: (this.stage.width() / 2 - x) / scale, y: (this.stage.height() / 2 - y) / scale });
+        this.scale = scale;
+        this.stage.scale({ x: scale, y: scale });
+        this.stage.position({ x: this.stage.width() / 2 - center.x * scale, y: this.stage.height() / 2 - center.y * scale });
+        this.drawGrid();
+        this.connectionShapes.forEach(({ group }) => group.find('Line').forEach(line => line.hitStrokeWidth(Math.max(16, 20 / scale))));
+        this.updateResizeHandles();
+        const label = document.getElementById('zoom-level');
+        if (label) label.textContent = `${new Intl.NumberFormat('fr-FR', { maximumSignificantDigits: 3 }).format(scale * 100)} %`;
+        this.stage.batchDraw();
+        this.navigation?.schedulePersist();
     }
 
     toggleGrid() {
@@ -107,80 +122,13 @@ export class CanvasRenderer {
         return snapToGrid(pos, CONFIG.GRID_SIZE, this.snapToGrid);
     }
 
-    setupEvents() {
-        // Zoom with mouse wheel
-        this.stage.on('wheel', (e) => {
-            e.evt.preventDefault();
-
-            const oldScale = this.stage.scaleX();
-            const pointer = this.stage.getPointerPosition();
-
-            const mousePointTo = {
-                x: (pointer.x - this.stage.x()) / oldScale,
-                y: (pointer.y - this.stage.y()) / oldScale
-            };
-
-            const direction = e.evt.deltaY > 0 ? -1 : 1;
-            const newScale = Math.max(
-                CONFIG.ZOOM_MIN,
-                Math.min(CONFIG.ZOOM_MAX, oldScale + direction * CONFIG.ZOOM_STEP)
-            );
-
-            this.setZoom(newScale, mousePointTo, pointer);
-        });
-
-        document.addEventListener('keydown', event => {
-            const isFormField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target?.tagName);
-            if (event.code === 'Space' && !isFormField && !event.repeat) {
-                event.preventDefault();
-                this.isSpacePressed = true;
-                this.stage.draggable(true);
-                this.stage.container().style.cursor = 'grab';
-            }
-        });
-
-        document.addEventListener('keyup', event => {
-            if (event.code === 'Space') {
-                this.isSpacePressed = false;
-                this.stage.draggable(false);
-                this.isPanning = false;
-                this.stage.container().style.cursor = window.app?.currentTool === 'select' ? 'default' : 'crosshair';
-            }
-        });
-
-        this.stage.on('dragstart', event => {
-            if (event.target === this.stage) {
-                this.isPanning = true;
-                this.stage.container().style.cursor = 'grabbing';
-            }
-        });
-
-        this.stage.on('dragend', event => {
-            if (event.target === this.stage) {
-                window.setTimeout(() => { this.isPanning = false; }, 0);
-                this.stage.container().style.cursor = this.isSpacePressed ? 'grab' : 'default';
-            }
-        });
-    }
-
     setZoom(scale, center, pointer) {
-        this.scale = Number(scale.toFixed(3));
-        this.stage.scale({ x: scale, y: scale });
-
-        const newPos = {
-            x: pointer.x - center.x * scale,
-            y: pointer.y - center.y * scale
-        };
-
-        this.stage.position(newPos);
-        this.stage.batchDraw();
-
-        const zoomLabel = document.getElementById('zoom-level');
-        if (zoomLabel) zoomLabel.textContent = Math.round(scale * 100) + ' %';
+        scale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale));
+        this.setView(pointer.x - center.x * scale, pointer.y - center.y * scale, scale);
     }
 
     zoomIn() {
-        const newScale = Math.min(CONFIG.ZOOM_MAX, this.scale + CONFIG.ZOOM_STEP);
+        const newScale = Math.min(MAX_ZOOM, this.scale * 1.2);
         const center = {
             x: this.stage.width() / 2,
             y: this.stage.height() / 2
@@ -195,7 +143,7 @@ export class CanvasRenderer {
     }
 
     zoomOut() {
-        const newScale = Math.max(CONFIG.ZOOM_MIN, this.scale - CONFIG.ZOOM_STEP);
+        const newScale = Math.max(MIN_ZOOM, this.scale / 1.2);
         const center = {
             x: this.stage.width() / 2,
             y: this.stage.height() / 2
@@ -217,70 +165,294 @@ export class CanvasRenderer {
         }, center);
     }
 
-    fitToContent(padding = 55) {
-        const bounds = [];
-        this.state.entities.forEach(entity => bounds.push({
-            left: entity.x,
-            top: entity.y,
-            right: entity.x + CONFIG.ENTITY_WIDTH,
-            bottom: entity.y + CONFIG.ENTITY_MIN_HEIGHT + entity.attributes.length * CONFIG.ATTRIBUTE_HEIGHT
-        }));
-        this.state.associations.forEach(association => {
-            const shape = this.associationShapes.get(association.id);
-            const width = shape?.width || CONFIG.ASSOCIATION_MIN_WIDTH;
-            const height = shape?.height || CONFIG.ASSOCIATION_MIN_HEIGHT;
-            bounds.push({
-                left: association.x - width / 2,
-                top: association.y - height / 2,
-                right: association.x + width / 2,
-                bottom: association.y + height / 2
-            });
-        });
-
-        if (!bounds.length) {
-            this.stage.scale({ x: 1, y: 1 });
-            this.stage.position({ x: 0, y: 0 });
-            this.scale = 1;
-        } else {
-            const left = Math.min(...bounds.map(bound => bound.left));
-            const top = Math.min(...bounds.map(bound => bound.top));
-            const right = Math.max(...bounds.map(bound => bound.right));
-            const bottom = Math.max(...bounds.map(bound => bound.bottom));
-            const contentWidth = Math.max(1, right - left);
-            const contentHeight = Math.max(1, bottom - top);
-            const scale = Math.min(
-                CONFIG.ZOOM_MAX,
-                Math.max(CONFIG.ZOOM_MIN, Math.min(
-                    (this.stage.width() - padding * 2) / contentWidth,
-                    (this.stage.height() - padding * 2) / contentHeight
-                ))
-            );
-            this.scale = Number(scale.toFixed(3));
-            this.stage.scale({ x: this.scale, y: this.scale });
-            this.stage.position({
-                x: (this.stage.width() - contentWidth * this.scale) / 2 - left * this.scale,
-                y: (this.stage.height() - contentHeight * this.scale) / 2 - top * this.scale
-            });
-        }
-        const zoomLabel = document.getElementById('zoom-level');
-        if (zoomLabel) zoomLabel.textContent = Math.round(this.scale * 100) + ' %';
-        this.stage.batchDraw();
+    contentBounds(padding = 35) {
+        const rects = [...this.nodeLayer.getChildren(), ...this.connectionLayer.getChildren()]
+            .map(shape => shape.getClientRect({ relativeTo: this.stage, skipShadow: true }));
+        if (!rects.length) return null;
+        const x = Math.min(...rects.map(r => r.x)) - padding;
+        const y = Math.min(...rects.map(r => r.y)) - padding;
+        return { x, y, width: Math.max(...rects.map(r => r.x + r.width)) + padding - x,
+            height: Math.max(...rects.map(r => r.y + r.height)) + padding - y };
     }
 
-    exportPNG(pixelRatio = 2) {
-        return this.stage.toDataURL({ pixelRatio, mimeType: 'image/png' });
+    fitToContent() {
+        const bounds = this.contentBounds(55);
+        if (!bounds) { this.setView(this.stage.width() / 2, this.stage.height() / 2, 1); return; }
+        const scale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.stage.width() / bounds.width, this.stage.height() / bounds.height));
+        this.setView(this.stage.width() / 2 - (bounds.x + bounds.width / 2) * scale,
+            this.stage.height() / 2 - (bounds.y + bounds.height / 2) * scale, scale);
+    }
+
+    imageOptions({ scope = 'all', pixelRatio = 2, grid = this.showGrid } = {}) {
+        const bounds = scope === 'view' ? this.getVisibleBounds() : this.contentBounds() || this.getVisibleBounds();
+        const dimensions = imageDimensions(bounds, scope === 'view' ? pixelRatio * this.scale : pixelRatio);
+        return { bounds, ...dimensions, grid, scope };
+    }
+
+    exportPNG(options = {}) {
+        if (typeof options === 'number') options = { pixelRatio: options };
+        const { bounds, ratio, width, height, grid } = this.imageOptions(options);
+        const stage = new Konva.Stage({ container: document.createElement('div'), width, height });
+        try {
+            stage.scale({ x: ratio, y: ratio });
+            stage.position({ x: -bounds.x * ratio, y: -bounds.y * ratio });
+            const background = new Konva.Layer();
+            background.add(new Konva.Rect({ ...bounds, fill: '#ffffff' }));
+            if (grid) background.add(this.makeGrid(bounds, ratio));
+            stage.add(background);
+            for (const source of [this.connectionLayer, this.nodeLayer]) {
+                const layer = source.clone({ listening: false });
+                layer.find('Group').forEach(group => {
+                    const type = group.getAttr('itemType');
+                    if (type === 'connection') group.find('Line').forEach(line => line.stroke(CONFIG.COLORS.connection).strokeWidth(2));
+                    if (type === 'entity') group.findOne('Rect')?.stroke(CONFIG.COLORS.entityStroke).strokeWidth(2);
+                    if (type === 'association') group.findOne('Ellipse')?.stroke(CONFIG.COLORS.associationStroke).strokeWidth(2);
+                    group.find('.text-selection').forEach(rect => rect.destroy());
+                });
+                stage.add(layer);
+            }
+            stage.draw();
+            return stage.toDataURL({ pixelRatio: 1, mimeType: 'image/png' });
+        } finally { stage.destroy(); }
     }
 
     handleResize() {
-        this.stage.width(this.container.offsetWidth);
-        this.stage.height(this.container.offsetHeight);
-        this.stage.batchDraw();
+        const width = this.container.offsetWidth, height = this.container.offsetHeight;
+        if (!width || !height || width === this.stage.width() && height === this.stage.height()) return;
+        const dx = (width - this.stage.width()) / 2, dy = (height - this.stage.height()) / 2;
+        this.stage.size({ width, height });
+        this.setView(this.stage.x() + dx, this.stage.y() + dy, this.scale);
+    }
+
+    handleCanvasClick(hit, event) {
+        const app = window.app;
+        if (!app || app.currentTool === 'pan' || document.querySelector('.modal-overlay.active')) return;
+        if (app.currentTool === 'connection') { app.handleConnectionTool({ target: hit || this.stage, evt: event }); return; }
+        const group = this.navigation.getGroup(hit);
+        const type = group?.getAttr('itemType');
+        const id = group?.getAttr('itemId');
+        if (!type) { app.handleStageClick({ target: this.stage, evt: event }); return; }
+        if (app.currentTool !== 'select') return;
+        this.state.select({ type, id }, event.shiftKey);
+        this.updateSelection();
+        if (event.shiftKey) return;
+        if (type === 'connection') {
+            app.modalManager.openConnectionModal(id, hit?.getAttr('editField') || 'minimum');
+            this.lastTap = null;
+        } else {
+            const now = performance.now();
+            if (this.lastTap?.id === id && now - this.lastTap.time < 350) {
+                app.editSelected(); this.lastTap = null;
+            } else this.lastTap = { id, time: now };
+        }
+    }
+
+    commitNodeMove(node, type, original) {
+        if (node.x !== original.x || node.y !== original.y) {
+            this.state.executeCommand(new MoveNodeCommand(this.state, node.id, type, original, { x: node.x, y: node.y }));
+        }
+    }
+
+    commitMultiNodeMove(gesture) {
+        const moves = [
+            { id: gesture.node.id, type: gesture.type, oldPos: gesture.original, newPos: { x: gesture.node.x, y: gesture.node.y } },
+            ...gesture.multiDrag.map(peer => ({
+                id: peer.id, type: peer.type, oldPos: peer.original, newPos: { x: peer.node.x, y: peer.node.y }
+            }))
+        ].filter(m => m.oldPos.x !== m.newPos.x || m.oldPos.y !== m.newPos.y);
+        if (moves.length) this.state.executeCommand(new MoveMultipleNodesCommand(this.state, moves));
+    }
+
+    getShapeGroup(id, type) {
+        if (type === 'entity') return this.entityShapes.get(id)?.group;
+        if (type === 'association') return this.associationShapes.get(id)?.group;
+        if (type === 'text') return this.textShapes.get(id)?.group;
+        return null;
+    }
+
+    updateLasso(startWorld, endWorld) {
+        this.lassoRect?.destroy();
+        const x = Math.min(startWorld.x, endWorld.x);
+        const y = Math.min(startWorld.y, endWorld.y);
+        const width = Math.abs(endWorld.x - startWorld.x);
+        const height = Math.abs(endWorld.y - startWorld.y);
+        this.lassoRect = new Konva.Rect({
+            x, y, width, height,
+            stroke: '#2563eb', strokeWidth: 1 / this.scale,
+            dash: [6 / this.scale, 4 / this.scale],
+            fill: 'rgba(37, 99, 235, 0.08)', listening: false
+        });
+        this.controlsLayer.add(this.lassoRect);
+        this.controlsLayer.batchDraw();
+    }
+
+    finishLasso(startWorld, endWorld, cancelled) {
+        this.lassoRect?.destroy();
+        this.lassoRect = null;
+        this.controlsLayer.batchDraw();
+        if (cancelled) return;
+        const x1 = Math.min(startWorld.x, endWorld.x);
+        const y1 = Math.min(startWorld.y, endWorld.y);
+        const x2 = Math.max(startWorld.x, endWorld.x);
+        const y2 = Math.max(startWorld.y, endWorld.y);
+        if (x2 - x1 < 5 && y2 - y1 < 5) return; // too small, treat as click
+        const items = [];
+        for (const entity of this.state.entities) {
+            const rect = this.nodeRectangle(entity, 'entity');
+            if (this.rectsOverlap(x1, y1, x2, y2, rect)) items.push({ type: 'entity', id: entity.id });
+        }
+        for (const assoc of this.state.associations) {
+            const rect = this.nodeRectangle(assoc, 'association');
+            if (this.rectsOverlap(x1, y1, x2, y2, rect)) items.push({ type: 'association', id: assoc.id });
+        }
+        for (const text of this.state.texts) {
+            const rect = this.nodeRectangle(text, 'text');
+            if (this.rectsOverlap(x1, y1, x2, y2, rect)) items.push({ type: 'text', id: text.id });
+        }
+        if (items.length) {
+            this.state.selectedItems = items;
+            this.state.notify('selection');
+            this.updateSelection();
+        }
+    }
+
+    rectsOverlap(x1, y1, x2, y2, rect) {
+        return rect.x < x2 && rect.x + rect.width > x1 && rect.y < y2 && rect.y + rect.height > y1;
+    }
+
+    commitNodeResize(node, type, original) {
+        const next = sizeSnapshot(node);
+        if (Object.keys(next).some(key => next[key] !== original[key])) {
+            this.state.executeCommand(new ResizeNodeCommand(this.state, node.id, type, original, next));
+        }
+    }
+
+    measureText(config) {
+        const text = new Konva.Text({ fontFamily: 'Arial', ...config });
+        const size = { width: text.width(), height: text.height() };
+        text.destroy();
+        return size;
+    }
+
+    entityMetrics(entity, requestedWidth = entity.width ?? CONFIG.ENTITY_WIDTH) {
+        const minWidth = Math.max(160, ...entity.attributes.map(attr =>
+            formatAttribute(attr).reduce((sum, part) => sum + this.measureText({ text: part.text,
+                fontSize: part.style === 'constraint' ? 10 : 12,
+                fontStyle: part.style === 'pk' ? 'bold' : 'normal' }).width + 1, 2 * CONFIG.ENTITY_PADDING)));
+        const width = Math.max(minWidth, requestedWidth);
+        const headerHeight = Math.max(40, 24 + this.measureText({ text: entity.name, fontSize: 16,
+            fontStyle: 'bold', width: width - 2 * CONFIG.ENTITY_PADDING }).height);
+        const minHeight = Math.max(CONFIG.ENTITY_MIN_HEIGHT, headerHeight + 24 + entity.attributes.length * CONFIG.ATTRIBUTE_HEIGHT);
+        return { width, height: Math.max(entity.height ?? CONFIG.ENTITY_MIN_HEIGHT + entity.attributes.length * CONFIG.ATTRIBUTE_HEIGHT, minHeight),
+            minWidth, minHeight, headerHeight };
+    }
+
+    associationMetrics(assoc, requestedWidth = assoc.width ?? CONFIG.ASSOCIATION_MIN_WIDTH) {
+        const minWidth = Math.max(120, ...assoc.attributes.map(attr =>
+            this.measureText({ text: formatAttributeSimple(attr), fontSize: 11 }).width / 0.7 + 24));
+        const width = Math.max(minWidth, requestedWidth);
+        const titleHeight = this.measureText({ text: assoc.name, fontSize: 14, fontStyle: 'bold', width: width * 0.7 }).height;
+        const contentHeight = titleHeight + (assoc.attributes.length ? 12 + assoc.attributes.length * CONFIG.ASSOCIATION_ATTRIBUTE_HEIGHT : 0);
+        const minHeight = Math.max(60, contentHeight / 0.7 + 16);
+        return { width, height: Math.max(assoc.height ?? CONFIG.ASSOCIATION_MIN_HEIGHT, minHeight),
+            minWidth, minHeight, titleHeight, contentHeight };
+    }
+
+    textConfig(annotation) {
+        return { text: annotation.text, fontFamily: 'Arial', fontSize: annotation.fontSize,
+            fontStyle: [annotation.bold && 'bold', annotation.italic && 'italic'].filter(Boolean).join(' ') || 'normal',
+            textDecoration: annotation.underline ? 'underline' : '', fill: '#1e293b', lineHeight: 1.35,
+            padding: 6, name: 'annotation-text' };
+    }
+
+    textMetrics(annotation, requestedWidth = annotation.width) {
+        const config = this.textConfig(annotation);
+        const minWidth = Math.max(60, annotation.fontSize * 1.5 + 12);
+        const width = Math.max(minWidth, requestedWidth ?? Math.min(480, this.measureText(config).width));
+        const minHeight = this.measureText({ ...config, width }).height;
+        return { width, height: Math.max(annotation.height ?? 0, minHeight), minWidth, minHeight };
+    }
+
+    nodeMetrics(node, type, width) {
+        return type === 'entity' ? this.entityMetrics(node, width) : type === 'association' ?
+            this.associationMetrics(node, width) : this.textMetrics(node, width);
+    }
+
+    nodeRectangle(node, type) {
+        const { width, height } = this.nodeMetrics(node, type);
+        return { x: node.x - (type === 'association' ? width / 2 : 0),
+            y: node.y - (type === 'association' ? height / 2 : 0), width, height };
+    }
+
+    resizeNode(gesture, point) {
+        const delta = { x: point.x - gesture.startWorld.x, y: point.y - gesture.startWorld.y };
+        const tentative = resizedRectangle(gesture.originalRect, gesture.handle, delta, { width: 1, height: 1 });
+        const metrics = this.nodeMetrics(gesture.node, gesture.type, tentative.width);
+        const rect = resizedRectangle(gesture.originalRect, gesture.handle, delta, { width: metrics.minWidth, height: metrics.minHeight });
+        const position = constrainPosition({ x: rect.x + (gesture.type === 'association' ? rect.width / 2 : 0),
+            y: rect.y + (gesture.type === 'association' ? rect.height / 2 : 0) });
+        Object.assign(gesture.node, position, { width: rect.width, height: rect.height });
+        this.refreshNode(gesture.node, gesture.type);
+    }
+
+    refreshNode(node, type) {
+        if (type === 'entity') this.updateEntityShape(node);
+        else if (type === 'association') this.updateAssociationShape(node);
+        else { this.textShapes.get(node.id)?.group.destroy(); this.createTextShape(node); }
+        if (type !== 'text') this.renderConnections();
+        this.updateSelection();
+    }
+
+    updateResizeHandles() {
+        this.controlsLayer.destroyChildren();
+        const item = this.state.selectedItems.length === 1 ? this.state.selectedItems[0] : null;
+        if (!item || !['entity', 'association', 'text'].includes(item.type) ||
+            (window.app?.currentTool || 'select') !== 'select') {
+            this.controlsLayer.batchDraw(); return;
+        }
+        const node = item.type === 'entity' ? this.state.getEntity(item.id) : item.type === 'association' ?
+            this.state.getAssociation(item.id) : this.state.getText(item.id);
+        if (!node) return;
+        const rect = this.nodeRectangle(node, item.type);
+        const group = new Konva.Group({ itemId: item.id, itemType: item.type, x: rect.x, y: rect.y });
+        group.add(new Konva.Rect({ width: rect.width, height: rect.height, stroke: '#2563eb',
+            strokeWidth: 1 / this.scale, dash: [4 / this.scale, 3 / this.scale], listening: false }));
+        for (const [name, x, y] of [['nw', 0, 0], ['n', 0.5, 0], ['ne', 1, 0], ['e', 1, 0.5],
+            ['se', 1, 1], ['s', 0.5, 1], ['sw', 0, 1], ['w', 0, 0.5]]) {
+            group.add(new Konva.Rect({ x: x * rect.width - 5 / this.scale, y: y * rect.height - 5 / this.scale,
+                width: 10 / this.scale, height: 10 / this.scale, cornerRadius: 2 / this.scale,
+                fill: '#ffffff', stroke: '#2563eb', strokeWidth: 1.5 / this.scale, hitStrokeWidth: 14 / this.scale,
+                resizeHandle: name, name: 'resize-handle' }));
+        }
+        this.controlsLayer.add(group);
+        this.controlsLayer.batchDraw();
     }
 
     render() {
         this.renderNodes();
+        this.renderTexts();
         this.renderConnections();
         this.updateSelection();
+    }
+
+    renderTexts() {
+        this.textShapes.forEach(({ group }) => group.destroy());
+        this.textShapes.clear();
+        for (const annotation of this.state.texts) {
+            this.createTextShape(annotation);
+        }
+    }
+
+    createTextShape(annotation) {
+        const { width, height } = this.textMetrics(annotation);
+        const group = new Konva.Group({ id: annotation.id, itemId: annotation.id, itemType: 'text', x: annotation.x, y: annotation.y });
+        const text = new Konva.Text({ ...this.textConfig(annotation), width });
+        const hitArea = new Konva.Rect({ width, height, fill: 'rgba(0,0,0,0)' });
+        const border = new Konva.Rect({ width, height, stroke: CONFIG.COLORS.connectionSelected,
+            strokeWidth: 1, dash: [4, 3], visible: false, listening: false, name: 'text-selection' });
+        group.add(hitArea, text, border);
+        this.nodeLayer.add(group);
+        this.textShapes.set(annotation.id, { group, text, annotation, width, height });
     }
 
     renderNodes() {
@@ -331,10 +503,10 @@ export class CanvasRenderer {
             itemId: entity.id
         });
 
-        const height = CONFIG.ENTITY_MIN_HEIGHT + entity.attributes.length * CONFIG.ATTRIBUTE_HEIGHT;
+        const { width, height, headerHeight } = this.entityMetrics(entity);
 
         const rect = new Konva.Rect({
-            width: CONFIG.ENTITY_WIDTH,
+            width,
             height: height,
             fill: CONFIG.COLORS.entity,
             stroke: CONFIG.COLORS.entityStroke,
@@ -347,8 +519,8 @@ export class CanvasRenderer {
         });
 
         const headerRect = new Konva.Rect({
-            width: CONFIG.ENTITY_WIDTH,
-            height: 40,
+            width,
+            height: headerHeight,
             fill: CONFIG.COLORS.entityHeader,
             cornerRadius: [8, 8, 0, 0]
         });
@@ -357,7 +529,7 @@ export class CanvasRenderer {
             text: entity.name,
             x: CONFIG.ENTITY_PADDING,
             y: 12,
-            width: CONFIG.ENTITY_WIDTH - 2 * CONFIG.ENTITY_PADDING,
+            width: width - 2 * CONFIG.ENTITY_PADDING,
             fontSize: 16,
             fontStyle: 'bold',
             fill: CONFIG.COLORS.entityHeaderText,
@@ -366,7 +538,7 @@ export class CanvasRenderer {
 
         group.add(rect, headerRect, nameText);
 
-        let yOffset = 50;
+        let yOffset = headerHeight + 10;
         entity.attributes.forEach((attr) => {
             const parts = formatAttribute(attr);
             let xOffset = CONFIG.ENTITY_PADDING;
@@ -406,77 +578,10 @@ export class CanvasRenderer {
         this.attachEntityEvents(group, entity);
 
         this.nodeLayer.add(group);
-        this.entityShapes.set(entity.id, { group, rect, nameText, entity });
+        this.entityShapes.set(entity.id, { group, rect, nameText, entity, width, height });
     }
 
-    attachEntityEvents(group, entity) {
-        // Double-click detection (better than native dblclick with draggable elements)
-        let lastClickTime = 0;
-        const DOUBLE_CLICK_DELAY = 300; // ms
-
-        group.on('click', (e) => {
-            // Let app.js handle clicks when connection tool is active
-            if (window.app && window.app.currentTool === 'connection') {
-                return;
-            }
-
-            // Detect double-click manually
-            const now = Date.now();
-            const timeSinceLastClick = now - lastClickTime;
-
-            if (timeSinceLastClick < DOUBLE_CLICK_DELAY) {
-                // Double-click detected!
-                if (window.app && window.app.modalManager) {
-                    window.app.modalManager.openEntityModal(entity.id);
-                }
-                lastClickTime = 0; // Reset
-                return;
-            }
-
-            lastClickTime = now;
-
-            // Single click - select
-            setTimeout(() => {
-                if (lastClickTime === now) { // Only if not followed by another click
-                    const isMultiSelect = e.evt.shiftKey;
-                    this.state.select({ type: 'entity', id: entity.id }, isMultiSelect);
-                    this.updateSelection();
-                    if (window.app) window.app.updatePropertiesPanel();
-                }
-            }, DOUBLE_CLICK_DELAY);
-        });
-
-        group.on('dragstart', () => {
-            this.dragStartPos = { x: entity.x, y: entity.y };
-            this.dragNodeId = entity.id;
-            this.dragNodeType = 'entity';
-        });
-
-        group.on('dragmove', () => {
-            const pos = this.snapPosition(group.position());
-            group.position(pos);
-            entity.x = pos.x;
-            entity.y = pos.y;
-            this.renderConnections();
-        });
-
-        group.on('dragend', () => {
-            if (this.dragStartPos) {
-                const newPos = { x: entity.x, y: entity.y };
-                if (this.dragStartPos.x !== newPos.x || this.dragStartPos.y !== newPos.y) {
-                    this.state.executeCommand(
-                        new MoveNodeCommand(this.state, entity.id, 'entity', this.dragStartPos, newPos)
-                    );
-                }
-                this.dragStartPos = null;
-            }
-        });
-
-        group.on('contextmenu', (e) => {
-            e.evt.preventDefault();
-            if (window.app) window.app.showContextMenu(e.evt.clientX, e.evt.clientY, entity.id, 'entity');
-        });
-    }
+    attachEntityEvents(group) { group.draggable(false); }
 
     updateEntityShape(entity) {
         const shape = this.entityShapes.get(entity.id);
@@ -502,14 +607,7 @@ export class CanvasRenderer {
             itemId: assoc.id
         });
 
-        // Calculate size based on attributes
-        const headerHeight = 30;
-        const attrHeight = assoc.attributes.length * CONFIG.ASSOCIATION_ATTRIBUTE_HEIGHT;
-        const totalHeight = Math.max(
-            CONFIG.ASSOCIATION_MIN_HEIGHT,
-            headerHeight + attrHeight + CONFIG.ASSOCIATION_PADDING * 2
-        );
-        const width = CONFIG.ASSOCIATION_MIN_WIDTH;
+        const { width, height: totalHeight, titleHeight, contentHeight } = this.associationMetrics(assoc);
 
         const rect = new Konva.Ellipse({
             radiusX: width / 2,
@@ -526,9 +624,9 @@ export class CanvasRenderer {
         // Association name
         const nameText = new Konva.Text({
             text: assoc.name,
-            x: -width / 2 + CONFIG.ASSOCIATION_PADDING,
-            y: -totalHeight / 2 + 8,
-            width: width - CONFIG.ASSOCIATION_PADDING * 2,
+            x: -width * 0.35,
+            y: -contentHeight / 2,
+            width: width * 0.7,
             fontSize: 14,
             fontStyle: 'bold',
             fill: CONFIG.COLORS.associationText,
@@ -539,14 +637,14 @@ export class CanvasRenderer {
 
         // Attributes
         if (assoc.attributes.length > 0) {
-            let yOffset = -totalHeight / 2 + headerHeight + CONFIG.ASSOCIATION_PADDING;
+            let yOffset = -contentHeight / 2 + titleHeight + 12;
 
             assoc.attributes.forEach((attr) => {
                 const attrText = new Konva.Text({
                     text: formatAttributeSimple(attr),
-                    x: -width / 2 + CONFIG.ASSOCIATION_PADDING,
+                    x: -width * 0.35,
                     y: yOffset,
-                    width: width - CONFIG.ASSOCIATION_PADDING * 2,
+                    width: width * 0.7,
                     fontSize: 11,
                     fill: CONFIG.COLORS.associationText
                 });
@@ -561,74 +659,7 @@ export class CanvasRenderer {
         this.associationShapes.set(assoc.id, { group, rect, nameText, assoc, width, height: totalHeight });
     }
 
-    attachAssociationEvents(group, assoc, width, height) {
-        // Double-click detection (better than native dblclick with draggable elements)
-        let lastClickTime = 0;
-        const DOUBLE_CLICK_DELAY = 300; // ms
-
-        group.on('click', (e) => {
-            // Let app.js handle clicks when connection tool is active
-            if (window.app && window.app.currentTool === 'connection') {
-                return;
-            }
-
-            // Detect double-click manually
-            const now = Date.now();
-            const timeSinceLastClick = now - lastClickTime;
-
-            if (timeSinceLastClick < DOUBLE_CLICK_DELAY) {
-                // Double-click detected!
-                if (window.app && window.app.modalManager) {
-                    window.app.modalManager.openAssociationModal(assoc.id);
-                }
-                lastClickTime = 0; // Reset
-                return;
-            }
-
-            lastClickTime = now;
-
-            // Single click - select
-            setTimeout(() => {
-                if (lastClickTime === now) { // Only if not followed by another click
-                    const isMultiSelect = e.evt.shiftKey;
-                    this.state.select({ type: 'association', id: assoc.id }, isMultiSelect);
-                    this.updateSelection();
-                    if (window.app) window.app.updatePropertiesPanel();
-                }
-            }, DOUBLE_CLICK_DELAY);
-        });
-
-        group.on('dragstart', () => {
-            this.dragStartPos = { x: assoc.x, y: assoc.y };
-            this.dragNodeId = assoc.id;
-            this.dragNodeType = 'association';
-        });
-
-        group.on('dragmove', () => {
-            const pos = this.snapPosition(group.position());
-            group.position(pos);
-            assoc.x = pos.x;
-            assoc.y = pos.y;
-            this.renderConnections();
-        });
-
-        group.on('dragend', () => {
-            if (this.dragStartPos) {
-                const newPos = { x: assoc.x, y: assoc.y };
-                if (this.dragStartPos.x !== newPos.x || this.dragStartPos.y !== newPos.y) {
-                    this.state.executeCommand(
-                        new MoveNodeCommand(this.state, assoc.id, 'association', this.dragStartPos, newPos)
-                    );
-                }
-                this.dragStartPos = null;
-            }
-        });
-
-        group.on('contextmenu', (e) => {
-            e.evt.preventDefault();
-            if (window.app) window.app.showContextMenu(e.evt.clientX, e.evt.clientY, assoc.id, 'association');
-        });
-    }
+    attachAssociationEvents(group) { group.draggable(false); }
 
     updateAssociationShape(assoc) {
         const shape = this.associationShapes.get(assoc.id);
@@ -670,7 +701,7 @@ export class CanvasRenderer {
         const assocWidth = assocShape ? assocShape.width : CONFIG.ASSOCIATION_MIN_WIDTH;
         const assocHeight = assocShape ? assocShape.height : CONFIG.ASSOCIATION_MIN_HEIGHT;
 
-        const group = new Konva.Group({ id: conn.id });
+        const group = new Konva.Group({ id: conn.id, itemId: conn.id, itemType: 'connection' });
 
         if (isSelfAssociation) {
             // Draw curved lines for self-associations
@@ -691,34 +722,36 @@ export class CanvasRenderer {
 
         // Calculate angle and perpendicular offset for labels
         const angle = calculateAngle(assocPoint, entityPoint);
-        const perpOffset = getPerpendicularOffset(angle, CONFIG.LABEL_OFFSET);
-
         // Create line
         const line = new Konva.Line({
             points: [assocPoint.x, assocPoint.y, entityPoint.x, entityPoint.y],
             stroke: CONFIG.COLORS.connection,
             strokeWidth: 2,
             lineCap: 'round',
-            hitStrokeWidth: 16
+            hitStrokeWidth: Math.max(16, 20 / this.scale)
         });
 
-        // Cardinality near entity with smart positioning
+        // Measure the complete label instead of clipping custom bounds to 40px.
+        const cardText = this.createCardinalityText(conn.cardinality);
         const cardOffset = CONFIG.CARDINALITY_OFFSET;
+        const clearance = Math.max(CONFIG.LABEL_OFFSET,
+            Math.abs(Math.sin(angle)) * cardText.width() / 2 + Math.abs(Math.cos(angle)) * cardText.height() / 2 + 6);
+        const cardPerpendicular = getPerpendicularOffset(angle, clearance);
         const cardPos = {
-            x: entityPoint.x - Math.cos(angle) * cardOffset + perpOffset.x,
-            y: entityPoint.y - Math.sin(angle) * cardOffset + perpOffset.y
+            x: entityPoint.x - Math.cos(angle) * cardOffset + cardPerpendicular.x,
+            y: entityPoint.y - Math.sin(angle) * cardOffset + cardPerpendicular.y
         };
-
-        const cardText = new Konva.Text({
-            text: conn.cardinality,
-            x: cardPos.x - 20,
-            y: cardPos.y - 10,
-            width: 40,
-            fontSize: 15,
-            fontStyle: 'bold',
-            fill: '#1e293b',
-            align: 'center'
-        });
+        const { width: entityWidth, height: entityHeight } = this.entityMetrics(entity);
+        if (Math.abs(entityPoint.x - entity.x) < 0.01) {
+            cardPos.x = Math.min(cardPos.x, entity.x - cardText.width() / 2 - 8);
+        } else if (Math.abs(entityPoint.x - entity.x - entityWidth) < 0.01) {
+            cardPos.x = Math.max(cardPos.x, entity.x + entityWidth + cardText.width() / 2 + 8);
+        } else if (Math.abs(entityPoint.y - entity.y) < 0.01) {
+            cardPos.y = Math.min(cardPos.y, entity.y - cardText.height() / 2 - 8);
+        } else {
+            cardPos.y = Math.max(cardPos.y, entity.y + entityHeight + cardText.height() / 2 + 8);
+        }
+        cardText.position(cardPos);
 
         group.add(line, cardText);
 
@@ -727,13 +760,10 @@ export class CanvasRenderer {
             const midX = (assocPoint.x + entityPoint.x) / 2;
             const midY = (assocPoint.y + entityPoint.y) / 2;
 
-            // Offset label more to the side to avoid overlapping with cardinality
-            const labelOffset = getPerpendicularOffset(angle, 25);
-
             const labelText = new Konva.Text({
                 text: conn.label,
-                x: midX - 40 + labelOffset.x,
-                y: midY - 8 + labelOffset.y,
+                name: 'role-label',
+                editField: 'role',
                 width: 80,
                 fontSize: 14,
                 fill: '#2563eb',
@@ -741,13 +771,16 @@ export class CanvasRenderer {
                 align: 'center'
             });
 
+            labelText.position(clearLabelPosition({ x: midX, y: midY },
+                getPerpendicularOffset(angle, -1), { width: labelText.width(), height: labelText.height() }, [
+                    { x: entity.x, y: entity.y, width: entityWidth, height: entityHeight },
+                    { x: assoc.x - assocWidth / 2, y: assoc.y - assocHeight / 2, width: assocWidth, height: assocHeight },
+                    { x: cardPos.x - cardText.width() / 2, y: cardPos.y - cardText.height() / 2, width: cardText.width(), height: cardText.height() }
+                ]));
+
             group.add(labelText);
         }
 
-        line.on('click', () => {
-            this.state.select({ type: 'connection', id: conn.id }, false);
-            this.updateSelection();
-        });
     }
 
     drawSelfAssociationConnection(group, assoc, entity, conn, connectionIndex, assocWidth, assocHeight) {
@@ -791,7 +824,7 @@ export class CanvasRenderer {
             lineCap: 'round',
             tension: 0.3,
             bezier: true,
-            hitStrokeWidth: 16
+            hitStrokeWidth: Math.max(16, 20 / this.scale)
         });
 
         // Calculate midpoint of bezier curve (t=0.5)
@@ -820,8 +853,9 @@ export class CanvasRenderer {
         const tangentAngle = Math.atan2(y2 - y1, x2 - x1);
 
         // Use same distances as normal connections for consistency
-        const cardinalityDistance = CONFIG.LABEL_OFFSET;  // 15px - same as normal connections
-        const labelDistance = 25;  // 25px - same as normal connections
+        const cardText = this.createCardinalityText(conn.cardinality);
+        const cardinalityDistance = CONFIG.LABEL_OFFSET + Math.abs(Math.sin(tangentAngle)) * cardText.width() / 2 +
+            Math.abs(Math.cos(tangentAngle)) * cardText.height() / 2;
         const sideMultiplier = connectionIndex === 0 ? 1 : -1;
 
         // Cardinality on one side
@@ -829,29 +863,16 @@ export class CanvasRenderer {
         const cardPerpY = Math.cos(tangentAngle) * cardinalityDistance * sideMultiplier;
 
         // Cardinality at midpoint, offset to one side
-        const cardText = new Konva.Text({
-            text: conn.cardinality,
-            x: midX + cardPerpX - 20,
-            y: midY + cardPerpY - 10,
-            width: 40,
-            fontSize: 15,
-            fontStyle: 'bold',
-            fill: '#1e293b',
-            align: 'center'
-        });
+        cardText.position({ x: midX + cardPerpX, y: midY + cardPerpY });
 
         group.add(curve, cardText);
 
         // Label at midpoint, on the OPPOSITE side from cardinality
         if (conn.label && conn.label.trim()) {
-            // Opposite side: negate the multiplier, use same distance as normal connections
-            const labelPerpX = -Math.sin(tangentAngle) * labelDistance * (-sideMultiplier);
-            const labelPerpY = Math.cos(tangentAngle) * labelDistance * (-sideMultiplier);
-
             const labelText = new Konva.Text({
                 text: conn.label,
-                x: midX + labelPerpX - 40,
-                y: midY + labelPerpY - 10,
+                name: 'role-label',
+                editField: 'role',
                 width: 80,
                 fontSize: 14,
                 fill: '#2563eb',
@@ -859,13 +880,31 @@ export class CanvasRenderer {
                 align: 'center'
             });
 
+            labelText.position(clearLabelPosition({ x: midX, y: midY },
+                getPerpendicularOffset(tangentAngle, -sideMultiplier), { width: labelText.width(), height: labelText.height() }, [
+                    this.nodeRectangle(entity, 'entity'),
+                    { x: assoc.x - assocWidth / 2, y: assoc.y - assocHeight / 2, width: assocWidth, height: assocHeight },
+                    { x: cardText.x() - cardText.width() / 2, y: cardText.y() - cardText.height() / 2, width: cardText.width(), height: cardText.height() }
+                ]));
+
             group.add(labelText);
         }
 
-        curve.on('click', () => {
-            this.state.select({ type: 'connection', id: conn.id }, false);
-            this.updateSelection();
+    }
+
+    createCardinalityText(value) {
+        const text = new Konva.Text({
+            name: 'cardinality-label',
+            text: value,
+            fontSize: 15,
+            fontStyle: 'bold',
+            fill: '#1e293b',
+            wrap: 'none',
+            padding: 2,
+            editField: 'minimum'
         });
+        text.offset({ x: text.width() / 2, y: text.height() / 2 });
+        return text;
     }
 
     getAssociationEdgePoint(assoc, targetEntityOrPoint, width, height) {
@@ -895,14 +934,14 @@ export class CanvasRenderer {
     }
 
     getEntityEdgePoint(entity, targetAssoc) {
-        const centerX = entity.x + CONFIG.ENTITY_WIDTH / 2;
-        const centerY = entity.y + (CONFIG.ENTITY_MIN_HEIGHT + entity.attributes.length * CONFIG.ATTRIBUTE_HEIGHT) / 2;
+        const { width, height } = this.entityMetrics(entity);
+        const centerX = entity.x + width / 2;
+        const centerY = entity.y + height / 2;
 
         const dx = targetAssoc.x - centerX;
         const dy = targetAssoc.y - centerY;
 
-        const width = CONFIG.ENTITY_WIDTH;
-        const height = CONFIG.ENTITY_MIN_HEIGHT + entity.attributes.length * CONFIG.ATTRIBUTE_HEIGHT;
+        if (dx === 0 && dy === 0) return { x: entity.x + width, y: centerY };
 
         let x, y;
 
@@ -918,13 +957,15 @@ export class CanvasRenderer {
     }
 
     getEntityCenter(entity) {
+        const { width, height } = this.entityMetrics(entity);
         return {
-            x: entity.x + CONFIG.ENTITY_WIDTH / 2,
-            y: entity.y + (CONFIG.ENTITY_MIN_HEIGHT + entity.attributes.length * CONFIG.ATTRIBUTE_HEIGHT) / 2
+            x: entity.x + width / 2,
+            y: entity.y + height / 2
         };
     }
 
     updateSelection() {
+        this.textShapes.forEach(({ group }) => group.findOne('.text-selection').visible(false));
         // Reset all strokes
         this.entityShapes.forEach(shape => {
             const rect = shape.group.findOne('Rect');
@@ -962,6 +1003,8 @@ export class CanvasRenderer {
                         rect.strokeWidth(3);
                     }
                 }
+            } else if (item.type === 'text') {
+                this.textShapes.get(item.id)?.group.findOne('.text-selection').visible(true);
             } else if (item.type === 'connection') {
                 const shape = this.connectionShapes.get(item.id);
                 if (shape && shape.group) {
@@ -977,6 +1020,7 @@ export class CanvasRenderer {
 
         this.nodeLayer.batchDraw();
         this.connectionLayer.batchDraw();
+        this.updateResizeHandles();
     }
 
     getStagePointerPosition() {
